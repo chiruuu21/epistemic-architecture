@@ -1,0 +1,32 @@
+==============================================================================
+                             EpstLoop test suite                              
+==============================================================================
+
+  test_belief_store.py         PASS   5 checks    0.07s
+    Belief store: weighting, state, RIF floor, batched query
+
+  test_reconsolidation.py      PASS   7 checks    0.07s
+    Reconsolidation: contest/reinforce branches, RIF, skips
+
+  test_nli_backend.py          PASS  16 checks    0.07s
+    NLI backend: label maps, thresholds, abstention, batching
+
+  test_ept_loop.py             PASS  18 checks    0.75s
+    End-to-end loop: claim extraction, flag accumulation
+
+  test_sae_loader.py           PASS   7 checks    0.75s
+    SAE loader: tensor mapping, b_dec, TopK, refusals
+
+  test_context_retrieval.py    PASS   8 checks    0.74s
+    Context retrieval: running mean, relevance cutoff, warm-up
+
+==============================================================================
+  ALL 61 CHECKS PASSED across 6 modules in 2.45s
+==============================================================================
+
+  Not included here (needs the transformer model):
+    smoke_test_nli_backend.py   — live NLI verdicts + end-to-end run
+    smoke_test_belief_gate.py   — belief gate on MPS
+    smoke_test_fok_gate.py      — FOK gate triggering and gradients
+    smoke_test_sae_semantics.py — pretrained SAE fidelity + semantic retrieval
+    smoke_test_lm_loop.py       — EpTLoop on real GPT-2 hidden states

@@ -1,0 +1,49 @@
+==============================================================================
+                       EpTLoop on GPT-2 small, layer 8                        
+==============================================================================
+  loaded in 2.2s   encoder gpt2-small:blocks.8.hook_resid_pre   NLI MockNLI
+
+==============================================================================
+1. Observe mode leaves GPT-2's output unchanged
+==============================================================================
+  prompt:   'The French capital city is'
+  plain:    " now home to the world's largest concentration of refugees, with"
+  observed: " now home to the world's largest concentration of refugees, with"
+  identical: True   loop steps: 12 (1 prefill + 11 decode)   tokens through loop: 16   265 ms
+
+==============================================================================
+2. Per-token retrieval on real hidden states
+==============================================================================
+  [ok ] The French capital city is                   -> Paris is the capital of France 4/5 tok, best cos 0.45
+  [ok ] Where does the memory store its records? On  -> The belief store keeps all ent 9/10 tok, best cos 0.24
+  [ok ] When you heat water on the stove it          -> Water boils at one hundred deg 5/8 tok, best cos 0.40
+  [ok ] Investors lost money when shares             -> The stock market fell sharply  5/6 tok, best cos 0.34
+  [MISS] The playwright who wrote the Danish tragedy  -> Paris is the capital of France 4/9 tok, best cos 0.34
+  majority-vote retrieval: 4/5 (chance 0.20)
+  per-token best cosine: median 0.06, max 0.45; theta_recon=0.15 flags any token below cos 0.85 -> 100% of tokens
+
+==============================================================================
+3. Gate mode: z_out written back into the residual stream
+==============================================================================
+  'The French capital city is'
+    plain: " now home to the world's largest concentration of refugees"
+    gated: ' set to host the first ever international soccer match between'   FOK triggered on 0% of tokens, last weff 0.809
+  'Where does the memory store its records? On the'
+    plain: ' left is the memory store, on the right is'
+    gated: ' left is the memory store, on the right is'   FOK triggered on 0% of tokens, last weff 0.795
+  'When you heat water on the stove it'
+    plain: ' will boil off the water and the water will be'
+    gated: ' will boil off the water and the water will be'   FOK triggered on 0% of tokens, last weff 0.809
+
+==============================================================================
+4. Reconsolidation after a real generation
+==============================================================================
+  generated: ' the memory card. It also stores the contents of the memory card in a'
+  flagged across 15 passes: 2 unique entries from 16 flag events
+  claim attached to target: 'It keeps all of its entries on the memory card.'
+  target belief 'The belief store keeps all entries on the CPU.'
+    ACTIVE w=0.800 -> ACTIVE w=0.850   weff now 0.8500
+  summary: contested=0 reinforced=1 neutral=0
+
+==============================================================================
+PASSED -- real GPT-2 hidden states drove the full loop

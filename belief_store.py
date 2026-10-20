@@ -183,7 +183,8 @@ class BeliefStore:
 
         return weff
 
-    def query_batch(self, concept_keys: np.ndarray, t_now: int, theta_recon: float = 0.15):
+    def query_batch(self, concept_keys: np.ndarray, t_now: int, theta_recon: float = 0.15,
+                    min_sim: Optional[float] = None, return_sim: bool = False):
         """Vectorized version of query() for many concept vectors at once.
 
         Replaces a per-token Python loop (each iteration doing its own
@@ -195,11 +196,21 @@ class BeliefStore:
 
         concept_keys: (M, D) array -- e.g. a whole (batch*seq, dict_size)
                       block flattened from a forward pass.
+        min_sim: relevance cutoff. Without it the nearest entry always
+                 answers, however far away it is -- on real GPT-2 codes the
+                 median best-match cosine is ~0.06 and every query still got
+                 its nearest entry's full weight (analysis_relevance.py).
+                 With it, a query whose best cosine is below min_sim gets
+                 weff 0.0 ("nothing relevant stored") and does NOT touch the
+                 entry: no last_accessed refresh (an irrelevant match would
+                 otherwise reset the entry's decay clock) and no flag.
+        return_sim: also return the (M,) best-match cosines.
         Returns:
             weff: (M,) float32 array of effective weights, one per query.
             flagged_ids: list of entry ids flagged for reconsolidation
                          this call (also merged into the internal
                          flagged_this_pass() buffer).
+            best_sim: only if return_sim.
 
         Complexity: O(M * N) for the similarity matrix, same asymptotic
         work as the loop version, but vectorized in numpy rather than
@@ -213,7 +224,8 @@ class BeliefStore:
         entries = list(self._entries.values())
         M = concept_keys.shape[0]
         if not entries:
-            return np.zeros(M, dtype=np.float32), []
+            empty = (np.zeros(M, dtype=np.float32), [])
+            return (*empty, np.zeros(M, dtype=np.float32)) if return_sim else empty
 
         K = np.stack([e.concept_key for e in entries]).astype(np.float32)  # (N, D)
         Q = np.asarray(concept_keys, dtype=np.float32)                    # (M, D)
@@ -239,19 +251,20 @@ class BeliefStore:
         # ACTIVE -> 1.0, CONTESTED -> penalty (not zero), SUPERSEDED -> hard 0
         state_factor = np.where(state_arr == 2, 0.0, np.where(state_arr == 1, CONTESTED_PENALTY, 1.0))
         weff_all = weight_arr * trust_arr * decay_factor * state_factor  # (N,)
-        weff = weff_all[best_idx]  # (M,)
+        relevant = best_sim >= min_sim if min_sim is not None else np.ones(M, dtype=bool)
+        weff = np.where(relevant, weff_all[best_idx], 0.0)  # (M,)
 
         # bookkeeping: update last_accessed / access_count for matched entries.
         # np.unique so an entry matched by many tokens gets one last_accessed
         # write (idempotent) and a correct summed access_count.
-        unique_idx, counts = np.unique(best_idx, return_counts=True)
+        unique_idx, counts = np.unique(best_idx[relevant], return_counts=True)
         for ui, cnt in zip(unique_idx, counts):
             entries[ui].last_accessed = t_now
             entries[ui].access_count += int(cnt)
 
         # reconsolidation flagging, vectorized (Section 3.3: err > theta_recon)
         err = 1.0 - best_sim
-        flagged_idx = np.unique(best_idx[err > theta_recon])
+        flagged_idx = np.unique(best_idx[(err > theta_recon) & relevant])
         flagged_ids = []
         for fi in flagged_idx:
             eid = entries[fi].id
@@ -259,6 +272,8 @@ class BeliefStore:
                 self._flagged_this_pass.append(eid)
             flagged_ids.append(eid)
 
+        if return_sim:
+            return weff.astype(np.float32), flagged_ids, best_sim.astype(np.float32)
         return weff.astype(np.float32), flagged_ids
 
     def flagged_this_pass(self) -> list[BeliefEntry]:

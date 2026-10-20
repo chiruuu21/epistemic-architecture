@@ -22,6 +22,7 @@ MODULES = [
     ("test_nli_backend.py", "NLI backend: label maps, thresholds, abstention, batching"),
     ("test_ept_loop.py", "End-to-end loop: claim extraction, flag accumulation"),
     ("test_sae_loader.py", "SAE loader: tensor mapping, b_dec, TopK, refusals"),
+    ("test_context_retrieval.py", "Context retrieval: running mean, relevance cutoff, warm-up"),
 ]
 
 WIDTH = 78

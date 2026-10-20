@@ -1,0 +1,42 @@
+==============================================================================
+                     Loading GPT-2 small + pretrained SAE                     
+==============================================================================
+  loaded in 1.6s   SAE 768->24576 @ blocks.8.hook_resid_pre   model layer 8
+
+==============================================================================
+1. Load fidelity: SAE reconstruction of real layer-8 activations
+==============================================================================
+  tokens: 348   BOS residual norm 3119.1 vs other tokens 108.2 (29x) -> why position 0 is dropped
+                                          FVU      L0   (FVU: lower is better; L0: features/token)
+  centered input, correct mapping       0.144    61.9   
+  raw HF input (not centered)          10.702   510.1   <- lm_hook centering
+  centered, b_dec left at zero         69.625  1497.8   <- sae_loader bug (1)
+
+==============================================================================
+2/3. Retrieval: 12 paraphrase queries against 24 stored beliefs (12 same-topic distractors)
+==============================================================================
+  method                       top-1     MRR   matched  mismatch     gap
+  pretrained SAE, top-32        0.67    0.80     0.244     0.072   0.172
+  pretrained SAE, native        0.67    0.80     0.262     0.081   0.181
+  random SAE (old)              0.58    0.74     0.611     0.467   0.144
+  residual, no SAE              0.83    0.88     0.921     0.852   0.069
+  lexical (Jaccard)             0.17    0.12     0.010     0.002   0.008
+  (chance top-1 = 0.04)
+
+  per-pair, pretrained SAE top-32:
+   [ok ] Every record in the memory lives in main processor R -> The belief store keeps all entries
+   [MISS] Its weights stay fixed and the optimizer never updat -> The decoder weights are updated by
+   [ok ] The French government is seated in the city on the S -> Paris is the capital of France.
+   [ok ] At normal atmospheric pressure H2O turns to steam on -> Water boils at one hundred degrees
+   [MISS] No other sea on the planet covers as much area as th -> Water boils at one hundred degrees
+   [MISS] The tragedy about the Danish prince came from the Ba -> The team won the championship game
+   [ok ] Lots of households own a faithful canine companion.  -> Dogs are loyal pets that many fami
+   [MISS] Share prices dropped hard at the start of the week.  -> Gold prices rose on Friday.
+   [ok ] She is a string musician in a symphony ensemble.     -> She plays the violin in an orchest
+   [ok ] Doctors prescribed medicine to fight his bacterial i -> The patient was given antibiotics 
+   [ok ] Storms left streets underwater after the downpour.   -> Heavy rain caused flooding in the 
+   [ok ] Yesterday evening the squad clinched the title.      -> The team won the championship game
+
+==============================================================================
+  load fidelity FVU<0.3: True   (retrieval above is informational; see analysis_relevance.py for CIs)
+PASSED -- SAE weights load and reconstruct correctly

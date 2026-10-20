@@ -114,6 +114,10 @@ class GPT2Activations:
     def _hook(self, module, args, kwargs):
         hidden = kwargs["hidden_states"] if "hidden_states" in kwargs else args[0]
         start = 1 if self._prefill else 0
+        if self._prefill:
+            # a new prompt: context-mode retrieval must not pool codes
+            # across prompts (no-op in token mode)
+            self._loop.belief_gate.reset_context()
         self._prefill = False
 
         raw = hidden[:, start:]
@@ -150,6 +154,14 @@ class GPT2Activations:
     @property
     def t_now(self) -> int:
         return self._t
+
+    @torch.no_grad()
+    def observe(self, text: str) -> dict:
+        """One forward pass over text inside attached(); returns that
+        pass's loop.step() output. A new prompt, so context is reset."""
+        self._prefill = True
+        self.model(self.encode_ids(text))
+        return self.last_step
 
     @torch.no_grad()
     def generate(self, prompt: str, max_new_tokens: int = 20) -> str:

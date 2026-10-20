@@ -85,10 +85,14 @@ class EpTLoop:
         eta_inhibit: float = 0.05,
         rif_k: int = 5,
         encoder=None,
+        retrieval: str = "token",
+        theta_rel: float = 0.15,
+        min_ctx: int = 3,
     ):
         self.belief_gate = BeliefGate(
             d_model=d_model, dict_size=dict_size, sae_k=sae_k,
             theta_recon=theta_recon, device=device, encoder=encoder,
+            retrieval=retrieval, theta_rel=theta_rel, min_ctx=min_ctx,
         )
         self.device = self.belief_gate.device
         self.fok_gate = FOKGate(d_model=d_model, theta_fok=theta_fok).to(self.device)
@@ -168,6 +172,8 @@ class EpTLoop:
             "PIK": PIK,
             "trigger_mask": trigger_mask,
             "flagged": flagged,
+            "match_sim": self.belief_gate.last_sim,
+            "relevant": self.belief_gate.last_relevant,
         }
 
     # -- post-generation ----------------------------------------------------
@@ -212,11 +218,13 @@ class EpTLoop:
         summary["claims"] = claims
 
         self._pending.clear()
+        self.belief_gate.reset_context()
         return summary
 
     def reset_generation(self) -> None:
         """Drop accumulated flags without reconsolidating (aborted run)."""
         self._pending.clear()
+        self.belief_gate.reset_context()
 
     def __repr__(self) -> str:
         return (

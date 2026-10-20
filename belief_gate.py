@@ -22,6 +22,7 @@ Design note on devices:
 
 from __future__ import annotations
 
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -65,12 +66,47 @@ class BeliefGate(nn.Module):
     reconsolidation this pass, without the gate owning the update logic
     itself (that stays in BeliefStore.reconsolidate / apply_rif, called
     separately post-generation per Section 3.5).
+
+    RETRIEVAL MODES
+    "token" (default, the paper's spec): each token's own SAE code is the
+        query and its nearest belief always answers. On real GPT-2 codes
+        this carries no relevance signal -- per-token best-match cosine
+        separates related from unrelated prompts at AUROC 0.42, and the
+        best-matching token is often a function word (analysis_relevance.py).
+    "context": the query at token t is the running mean of SAE codes over
+        tokens 1..t of the current prompt (causal, so prefill and each
+        decode step continue the same mean; reset_context() starts a new
+        prompt). Below theta_rel, or before min_ctx tokens of context,
+        nothing relevant is stored:
+          - weff = 0, so FOK's PIK is low and reasoning triggers;
+          - z passes through unscaled -- there is no belief to gate by;
+          - the entry is not touched or flagged (BeliefStore min_sim).
+        theta_rel=0.15 is the best of {0.15, 0.20, 0.25, 0.30} on 12+12
+        prompts with GPT-2 layer 8 (analysis_relevance.py section 5) --
+        chosen on the same small set it was measured on, so provisional.
+        A relevant match is flagged on every retrieval (theta_recon is
+        not consulted; context codes never get near cos 0.85), so each
+        belief actually used is checked against the output by NLI.
+    last_sim / last_relevant hold the most recent pass's match cosine and
+    relevance mask for inspection.
     """
 
     def __init__(self, d_model: int, dict_size: int = 4096, sae_k: int = 32,
                  theta_recon: float = 0.15, device: str | torch.device = "cpu",
-                 encoder: TopKSAEEncoder | None = None):
+                 encoder: TopKSAEEncoder | None = None, retrieval: str = "token",
+                 theta_rel: float = 0.15, min_ctx: int = 3):
         super().__init__()
+        if retrieval not in ("token", "context"):
+            raise ValueError(f"retrieval must be 'token' or 'context', got {retrieval!r}")
+        if retrieval == "context" and not theta_rel > 0:
+            # warm-up masking relies on a zero query (cos 0) being irrelevant
+            raise ValueError(f"theta_rel must be > 0 in context mode, got {theta_rel}")
+        self.retrieval = retrieval
+        self.theta_rel = theta_rel
+        self.min_ctx = min_ctx
+        self.last_sim = None
+        self.last_relevant = None
+        self.reset_context()
         # Resolve to the concrete device (e.g. "mps:0", "cuda:0") by
         # querying a real tensor, rather than trusting the bare
         # torch.device(device) string -- see .type comparison note below.
@@ -111,16 +147,62 @@ class BeliefGate(nn.Module):
         c = self.encoder(z_attn)  # (B, S, dict_size), stays on self.device
 
         B, S, _ = z_attn.shape
+        if self.retrieval == "context":
+            return self._forward_context(z_attn, c, t_now)
 
         # Single batched store query instead of B*S individual ones (was
         # the throughput bottleneck -- see BeliefStore.query_batch
         # docstring). One off-device transfer for the whole block, one
         # vectorized numpy matmul, one on-device transfer back.
         c_flat = c.reshape(B * S, -1).detach().cpu().numpy()
-        weff_np, _flagged_ids = self.store.query_batch(c_flat, t_now=t_now, theta_recon=self.theta_recon)
+        weff_np, _flagged_ids, sim = self.store.query_batch(
+            c_flat, t_now=t_now, theta_recon=self.theta_recon, return_sim=True)
         weff = torch.from_numpy(weff_np).to(self.device).reshape(B, S)
+        self.last_sim = sim.reshape(B, S)
+        self.last_relevant = np.ones((B, S), dtype=bool)
 
         z_gated = z_attn * weff.unsqueeze(-1)  # broadcast scalar weight over d_model
+        flagged = self.store.flagged_this_pass()
+        return z_gated, weff, flagged
+
+    def reset_context(self) -> None:
+        """Start a new prompt: drop the running code sum (context mode)."""
+        self._ctx_sum = None
+        self._ctx_n = 0
+
+    def _forward_context(self, z_attn, c, t_now):
+        B, S, _ = z_attn.shape
+        # running mean over the prompt so far, continued across calls so a
+        # prefill pass followed by one-token decode passes gives the same
+        # queries as a single pass over the whole sequence
+        csum = torch.cumsum(c, dim=1)
+        if self._ctx_sum is not None:
+            if self._ctx_sum.shape[0] != B:
+                raise ValueError("batch size changed mid-prompt; call reset_context() first")
+            csum = csum + self._ctx_sum
+        n = torch.arange(1, S + 1, device=c.device, dtype=c.dtype) + self._ctx_n  # (S,)
+        q = csum / n[None, :, None]
+        self._ctx_sum = csum[:, -1:].detach()
+        self._ctx_n += S
+
+        # warm-up positions (< min_ctx tokens of context) become zero
+        # queries: cosine 0 is below theta_rel, so query_batch neither
+        # touches nor flags their nearest entry -- otherwise a lone
+        # prompt-initial "The" (cos 0.35 to beliefs starting with "The")
+        # would leak flags into reconsolidation
+        warm = (n >= self.min_ctx)
+        q = q * warm[None, :, None]
+        q_flat = q.reshape(B * S, -1).detach().cpu().numpy()
+        weff_np, _flagged_ids, sim = self.store.query_batch(
+            q_flat, t_now=t_now, theta_recon=0.0, min_sim=self.theta_rel, return_sim=True)
+        relevant = sim.reshape(B, S) >= self.theta_rel
+        self.last_sim = sim.reshape(B, S)
+        self.last_relevant = relevant
+
+        weff = torch.from_numpy(weff_np).to(self.device).reshape(B, S)
+        rel_t = torch.from_numpy(relevant).to(self.device)
+        gate_w = torch.where(rel_t, weff, torch.ones_like(weff))  # pass-through if nothing relevant
+        z_gated = z_attn * gate_w.unsqueeze(-1)
         flagged = self.store.flagged_this_pass()
         return z_gated, weff, flagged
 

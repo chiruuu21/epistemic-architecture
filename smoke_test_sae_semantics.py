@@ -19,8 +19,8 @@ Three sections:
      random SAE  -- the encoder the project used until now
      raw resid   -- mean residual stream, no SAE
      lexical     -- word-overlap (Jaccard), what MockNLI-style matching sees
-   If the pretrained SAE does not beat random, Week 8-9 has not
-   delivered meaning.
+   12 queries is too few to compare methods (one query = 8 points);
+   analysis_relevance.py repeats this on 50 queries with CIs.
 
 3. SEPARATION. Mean cosine between matched pairs vs mismatched pairs. Top-1
    accuracy says whether the right belief wins; the gap says by how much.
@@ -210,15 +210,17 @@ def main():
         mark = "ok " if j == i else "MISS"
         print(f"   [{mark}] {q[:52]:<52} -> {beliefs[j][:34]}")
 
-    sae, rnd = results["pretrained SAE, top-32"], results["random SAE (old)"]
-    beats_random = sae["top1"] > rnd["top1"] and sae["gap"] > rnd["gap"]
-
+    # Retrieval is reported, not asserted. This file once required the
+    # pretrained SAE to beat random here; it did on these 12 queries (0.67
+    # vs 0.58), but on the 50-query set in analysis_relevance.py the
+    # difference is +0.02, 95% CI [-0.12, 0.18] -- the 12-query margin was
+    # one query. A smoke test should not certify a claim that larger
+    # evidence contradicts, so only load fidelity gates the verdict.
     print("\n" + "=" * 78)
-    verdict = ok_fidelity and beats_random
-    print(f"  load fidelity FVU<0.3: {ok_fidelity}   pretrained beats random on top-1 and gap: "
-          f"{beats_random}")
-    print(("PASSED" if verdict else "FAILED") + " -- see table above for the numbers")
-    sys.exit(0 if verdict else 1)
+    print(f"  load fidelity FVU<0.3: {ok_fidelity}   (retrieval above is informational; "
+          f"see analysis_relevance.py for CIs)")
+    print(("PASSED" if ok_fidelity else "FAILED") + " -- SAE weights load and reconstruct correctly")
+    sys.exit(0 if ok_fidelity else 1)
 
 
 if __name__ == "__main__":
