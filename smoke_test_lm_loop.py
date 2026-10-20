@@ -60,7 +60,7 @@ W = 78
 
 
 def make_loop(encoder, nli_fn=None):
-    loop = EpTLoop(d_model=768, dict_size=encoder.W_enc.shape[1], encoder=encoder,
+    loop = EpTLoop(d_model=768, dict_size=encoder.d_out, encoder=encoder,
                    nli_fn=nli_fn, theta_fok=0.5)
     return loop
 

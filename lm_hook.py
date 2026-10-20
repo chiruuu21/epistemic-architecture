@@ -106,7 +106,7 @@ class GPT2Activations:
     @torch.no_grad()
     def concept_key(self, encoder, text: str) -> np.ndarray:
         """Sentence-level concept key: mean of per-token SAE codes."""
-        c = encoder(self.resid(text).to(encoder.W_enc.device))
+        c = encoder(self.resid(text).to(encoder.device))
         return c.mean(dim=0).cpu().numpy()
 
     # -- attaching the loop -------------------------------------------------
@@ -139,7 +139,7 @@ class GPT2Activations:
 
     @contextmanager
     def attached(self, loop, gate: bool = False, t_start: int = 0):
-        if loop.belief_gate.encoder.W_enc.shape[0] != self.d_model:
+        if loop.belief_gate.encoder.d_in != self.d_model:
             raise ValueError("loop's encoder width does not match this model")
         self._loop, self._gate, self._t, self._prefill = loop, gate, t_start, True
         self.last_step = None

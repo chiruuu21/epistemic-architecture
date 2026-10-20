@@ -1,7 +1,7 @@
 ==============================================================================
                        EpTLoop on GPT-2 small, layer 8                        
 ==============================================================================
-  loaded in 2.2s   encoder gpt2-small:blocks.8.hook_resid_pre   NLI MockNLI
+  loaded in 2.5s   encoder gpt2-small:blocks.8.hook_resid_pre   NLI MockNLI
 
 ==============================================================================
 1. Observe mode leaves GPT-2's output unchanged
@@ -9,7 +9,7 @@
   prompt:   'The French capital city is'
   plain:    " now home to the world's largest concentration of refugees, with"
   observed: " now home to the world's largest concentration of refugees, with"
-  identical: True   loop steps: 12 (1 prefill + 11 decode)   tokens through loop: 16   265 ms
+  identical: True   loop steps: 12 (1 prefill + 11 decode)   tokens through loop: 16   263 ms
 
 ==============================================================================
 2. Per-token retrieval on real hidden states

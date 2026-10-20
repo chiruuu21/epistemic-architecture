@@ -113,7 +113,14 @@ def retrieval(lm, encoders, beliefs, queries):
     return sims
 
 
-def relevance(lm, encoder, beliefs, related):
+def pooled_best(lm, encoder, beliefs, prompts):
+    """Best-match cosine of each prompt's pooled key against the store --
+    what context retrieval sees at a prompt's last token."""
+    K = unit(np.stack([lm.concept_key(encoder, b) for b in beliefs]))
+    return np.array([(unit(lm.concept_key(encoder, p)) @ K.T).max() for p in prompts])
+
+
+def relevance(lm, encoder, res_encoder, beliefs, related):
     print("\n" + "=" * W)
     print(f"2. Relevance: {len(related)} related vs {len(UNRELATED)} unrelated prompts")
     print("=" * W)
@@ -124,22 +131,25 @@ def relevance(lm, encoder, beliefs, related):
 
     K = unit(np.stack([codes(b).mean(0) for b in beliefs]))
     K_res = unit(np.stack([lm.resid(b).mean(0).numpy() for b in beliefs]))
+    K_cen = unit(np.stack([lm.concept_key(res_encoder, b) for b in beliefs]))
 
     def signals(text):
         c = codes(text)
         tok = (unit(c) @ K.T).max(1)
         return {"token max": tok.max(), "token mean": tok.mean(),
                 "pooled SAE": (unit(c.mean(0)) @ K.T).max(),
-                "pooled resid": (unit(lm.resid(text).mean(0).numpy()) @ K_res.T).max()}, tok
+                "pooled resid": (unit(lm.resid(text).mean(0).numpy()) @ K_res.T).max(),
+                "pooled resid-bdec": (unit(lm.concept_key(res_encoder, text)) @ K_cen.T).max(),
+                }, tok
 
     rel = [signals(q) for q in related]
     unr = [signals(q) for q in UNRELATED]
-    print(f"  {'signal':<16}{'related':>10}{'unrelated':>11}{'AUROC':>8}{'95% CI':>15}")
+    print(f"  {'signal':<19}{'related':>10}{'unrelated':>11}{'AUROC':>8}{'95% CI':>15}")
     for name in rel[0][0]:
         p = np.array([s[name] for s, _ in rel])
         n = np.array([s[name] for s, _ in unr])
         point, interval = boot_auroc(p, n)
-        print(f"  {name:<16}{p.mean():>10.3f}{n.mean():>11.3f}{point:>8.2f}{interval:>15}")
+        print(f"  {name:<19}{p.mean():>10.3f}{n.mean():>11.3f}{point:>8.2f}{interval:>15}")
 
     tok_rel = np.concatenate([t for _, t in rel])
     print(f"  per-token best cos (related): "
@@ -147,16 +157,17 @@ def relevance(lm, encoder, beliefs, related):
           + "   -> theta_recon=0.15 (cos 0.85) flags every token")
 
 
-def compare_modes(lm, encoder, beliefs, related):
-    """All beliefs VERIFIED at weight 0.9 (weff 0.81) so trust tiers do not
+def compare_modes(lm, key_types, beliefs, related):
+    """key_types: [(label, encoder, [(mode, theta_rel), ...])].
+    All beliefs VERIFIED at weight 0.9 (weff 0.81) so trust tiers do not
     confound PIK. Warm-up tokens (min_ctx) are excluded in both modes."""
     from belief_store import ContentType, SourceTier
     from ept_loop import EpTLoop
 
     MIN_CTX = 3
 
-    def run(retrieval_mode, theta_rel):
-        loop = EpTLoop(d_model=lm.d_model, dict_size=encoder.W_enc.shape[1], encoder=encoder,
+    def run(encoder, retrieval_mode, theta_rel):
+        loop = EpTLoop(d_model=lm.d_model, dict_size=encoder.d_out, encoder=encoder,
                        retrieval=retrieval_mode, theta_rel=theta_rel, min_ctx=MIN_CTX,
                        theta_fok=0.5)
         keys = {b: lm.concept_key(encoder, b) for b in beliefs}
@@ -181,22 +192,25 @@ def compare_modes(lm, encoder, beliefs, related):
     print("\n" + "=" * W)
     print("3. Full loop: token vs context retrieval (FOK fire rate per token, 95% CI)")
     print("=" * W)
-    print(f"  {'mode':<20}{'fires: related':>21}{'fires: unrelated':>21}{'PIK AUROC':>17}"
+    print(f"  {'keys / mode':<26}{'fires: related':>21}{'fires: unrelated':>21}{'PIK AUROC':>17}"
           f"{'right':>7}{'flags r/u':>11}")
-    configs = [("token", 0.15)] + [("context", t) for t in (0.10, 0.15, 0.20, 0.25)]
-    for mode, theta_rel in configs:
-        r = run(mode, theta_rel)
-        fr, fr_ci = boot_mean([x["trig"] for x in r["rel"]])
-        fu, fu_ci = boot_mean([x["trig"] for x in r["unr"]])
-        au, au_ci = boot_auroc([x["pik"] for x in r["rel"]], [x["pik"] for x in r["unr"]])
-        right = sum(x["right"] for x in r["rel"])
-        flags = (np.mean([x["n_flags"] for x in r["rel"]]), np.mean([x["n_flags"] for x in r["unr"]]))
-        name = "token (paper)" if mode == "token" else f"context >={theta_rel:.2f}"
-        print(f"  {name:<20}{fr:>7.0%} {fr_ci:<13}{fu:>7.0%} {fu_ci:<13}{au:>5.2f} {au_ci:<11}"
-              f"{right:>3}/{len(related)}{flags[0]:>5.1f}/{flags[1]:.1f}")
+    for label, encoder, configs in key_types:
+        for mode, theta_rel in configs:
+            r = run(encoder, mode, theta_rel)
+            fr, fr_ci = boot_mean([x["trig"] for x in r["rel"]])
+            fu, fu_ci = boot_mean([x["trig"] for x in r["unr"]])
+            au, au_ci = boot_auroc([x["pik"] for x in r["rel"]], [x["pik"] for x in r["unr"]])
+            right = sum(x["right"] for x in r["rel"])
+            flags = (np.mean([x["n_flags"] for x in r["rel"]]),
+                     np.mean([x["n_flags"] for x in r["unr"]]))
+            name = f"{label}, token" if mode == "token" else f"{label}, >={theta_rel:.3f}"
+            print(f"  {name:<26}{fr:>7.0%} {fr_ci:<13}{fu:>7.0%} {fu_ci:<13}{au:>5.2f} {au_ci:<11}"
+                  f"{right:>3}/{len(related)}{flags[0]:>5.1f}/{flags[1]:.1f}")
     print("  want: fires rarely on related, often on unrelated; AUROC near 1; the right")
     print("        belief flagged; few flags on unrelated prompts. 'right' in token mode is")
-    print("        inflated: it flags several beliefs per prompt.")
+    print("        inflated: it flags several beliefs per prompt. Residual thresholds are")
+    print("        the 50/75/90th percentiles of UNRELATED prompts' pooled best-match")
+    print("        cosine (cosine scales differ by key type), so they are fit on this set.")
 
 
 def main():
@@ -205,19 +219,32 @@ def main():
     beliefs = [b for b, _ in PAIRS] + DISTRACTORS
     related = [q for _, q in PAIRS]
 
-    from sae_loader import encoder_from_tensors, load_sae_tensors
+    from belief_gate import ResidualKeyEncoder
+    from sae_loader import encoder_from_tensors, load_residual_key_encoder, load_sae_tensors
     cfg, tensors = load_sae_tensors()
     torch.manual_seed(0)
+    res_bdec = load_residual_key_encoder()
+    res_raw = ResidualKeyEncoder(cfg["d_in"])  # center 0
     encoders = {
         "pretrained SAE, top-32": encoder,
         "pretrained SAE, native": encoder_from_tensors(cfg, tensors, DEFAULT_HOOK, k=None),
         "random SAE (old)": TopKSAEEncoder(cfg["d_in"], cfg["d_sae"], k=32),
+        "residual - b_dec": res_bdec,
     }
     del tensors
 
     retrieval(lm, encoders, beliefs, related)
-    relevance(lm, encoder, beliefs, related)
-    compare_modes(lm, encoder, beliefs, related)
+    relevance(lm, encoder, res_bdec, beliefs, related)
+
+    def grid(enc):
+        unr = pooled_best(lm, enc, beliefs, UNRELATED)
+        return [("context", float(np.percentile(unr, q))) for q in (50, 75, 90)]
+
+    compare_modes(lm, [
+        ("SAE", encoder, [("token", 0.15), ("context", 0.10), ("context", 0.15)]),
+        ("resid", res_raw, grid(res_raw)),
+        ("resid-bdec", res_bdec, [("token", 0.15)] + grid(res_bdec)),
+    ], beliefs, related)
 
 
 if __name__ == "__main__":

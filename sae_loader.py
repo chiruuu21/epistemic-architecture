@@ -49,7 +49,7 @@ import json
 
 import torch
 
-from belief_gate import TopKSAEEncoder
+from belief_gate import ResidualKeyEncoder, TopKSAEEncoder
 
 DEFAULT_REPO = "jbloom/GPT2-Small-SAEs-Reformatted"
 DEFAULT_HOOK = "blocks.8.hook_resid_pre"
@@ -133,3 +133,17 @@ def load_pretrained_sae(repo_id: str = DEFAULT_REPO, hook_point: str = DEFAULT_H
     cfg, tensors = load_sae_tensors(repo_id, hook_point)
     tensors.pop("W_dec", None)  # ~75 MB the encoder never reads
     return encoder_from_tensors(cfg, tensors, hook_point, k=k).to(device)
+
+
+def load_residual_key_encoder(repo_id: str = DEFAULT_REPO, hook_point: str = DEFAULT_HOOK,
+                              device: str | torch.device = "cpu") -> ResidualKeyEncoder:
+    """Dense residual keys centered on this SAE's b_dec -- the geometric
+    median of the layer's activations over OpenWebText (cfg
+    b_dec_init_method), i.e. a corpus center estimated on outside data.
+    Only b_dec is used; the SAE's encoder and decoder are not."""
+    hook_layer(hook_point)
+    cfg, tensors = load_sae_tensors(repo_id, hook_point)
+    enc = ResidualKeyEncoder(cfg["d_in"], center=tensors["b_dec"])
+    enc.hook_point = hook_point
+    enc.source = f"{cfg.get('model_name', '?')}:{hook_point} residual - b_dec"
+    return enc.to(device)

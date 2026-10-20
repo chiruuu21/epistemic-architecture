@@ -123,6 +123,22 @@ def test_loop_runs_with_loaded_encoder():
     print("[PASS] EpTLoop runs end to end with a loaded encoder threaded through")
 
 
+def test_residual_key_encoder_contract():
+    from belief_gate import ResidualKeyEncoder
+    center = torch.randn(D_IN, generator=g)
+    enc = ResidualKeyEncoder(D_IN, center=center)
+    x = torch.randn(3, D_IN, generator=g)
+    assert torch.allclose(enc(x), x - center)
+    assert (enc.d_in, enc.d_out) == (D_IN, D_IN)
+    _raises(lambda: ResidualKeyEncoder(D_IN, center=torch.zeros(D_IN + 1)), "center has shape")
+    _raises(lambda: BeliefGate(d_model=D_IN * 2, encoder=enc), "encoder expects")
+    loop = EpTLoop(d_model=D_IN, dict_size=enc.d_out, encoder=enc, retrieval="context")
+    out = loop.step(torch.randn(1, 4, D_IN, generator=g), t_now=0)
+    assert out["weff"].shape == (1, 4)
+    print("[PASS] ResidualKeyEncoder: subtracts its center, same d_in/d_out contract, "
+          "runs in the loop")
+
+
 if __name__ == "__main__":
     test_hook_layer_parsing()
     test_native_relu_codes_reproduced_exactly()
@@ -131,3 +147,4 @@ if __name__ == "__main__":
     test_validate_refuses_bad_layouts()
     test_gate_rejects_encoder_of_wrong_width()
     test_loop_runs_with_loaded_encoder()
+    test_residual_key_encoder_contract()

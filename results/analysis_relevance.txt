@@ -5,30 +5,39 @@
   pretrained SAE, top-32       0.50   [0.36, 0.64]   0.64    0.214     0.067
   pretrained SAE, native       0.52   [0.38, 0.66]   0.66    0.233     0.077
   random SAE (old)             0.48   [0.34, 0.62]   0.58    0.533     0.404
-  residual, no SAE             0.72   [0.60, 0.84]   0.80    0.916     0.852
+  residual - b_dec             0.78   [0.66, 0.90]   0.84    0.659     0.393
+  residual, no SAE             0.72   [0.58, 0.84]   0.80    0.916     0.852
   lexical (Jaccard)            0.08   [0.02, 0.16]   0.08    0.012     0.002
-  pretrained SAE, top-32 - random SAE (old): +0.02  95% CI [-0.12, 0.18]  (paired)
+  pretrained SAE, top-32 - random SAE (old): +0.02  95% CI [-0.14, 0.16]  (paired)
   residual, no SAE - pretrained SAE, top-32: +0.22  95% CI [0.08, 0.36]  (paired)
 
 ==============================================================================
 2. Relevance: 50 related vs 50 unrelated prompts
 ==============================================================================
-  signal             related  unrelated   AUROC         95% CI
-  token max            0.349      0.330    0.54   [0.42, 0.65]
-  token mean           0.129      0.123    0.56   [0.44, 0.67]
-  pooled SAE           0.256      0.219    0.66   [0.55, 0.76]
-  pooled resid         0.922      0.896    0.86   [0.78, 0.93]
+  signal                related  unrelated   AUROC         95% CI
+  token max               0.349      0.330    0.54   [0.42, 0.65]
+  token mean              0.129      0.123    0.56   [0.45, 0.66]
+  pooled SAE              0.256      0.219    0.66   [0.55, 0.76]
+  pooled resid            0.922      0.896    0.86   [0.78, 0.93]
+  pooled resid-bdec       0.672      0.577    0.84   [0.76, 0.91]
   per-token best cos (related): p50=0.10  p90=0.27  p99=0.44   -> theta_recon=0.15 (cos 0.85) flags every token
 
 ==============================================================================
 3. Full loop: token vs context retrieval (FOK fire rate per token, 95% CI)
 ==============================================================================
-  mode                       fires: related     fires: unrelated        PIK AUROC  right  flags r/u
-  token (paper)            0% [0.00, 0.00]      0% [0.00, 0.00]  0.54 [0.47, 0.60] 44/50  7.3/5.9
-  context >=0.10           1% [0.00, 0.03]      5% [0.01, 0.11]  0.55 [0.45, 0.65] 28/50  1.7/1.6
-  context >=0.15          14% [0.07, 0.22]     20% [0.12, 0.30]  0.55 [0.45, 0.65] 26/50  1.5/1.3
-  context >=0.20          31% [0.21, 0.40]     39% [0.27, 0.52]  0.53 [0.43, 0.63] 25/50  1.3/1.0
-  context >=0.25          59% [0.48, 0.69]     66% [0.55, 0.76]  0.53 [0.45, 0.61] 19/50  1.0/0.7
+  keys / mode                      fires: related     fires: unrelated        PIK AUROC  right  flags r/u
+  SAE, token                     0% [0.00, 0.00]      0% [0.00, 0.00]  0.54 [0.46, 0.60] 44/50  7.3/5.9
+  SAE, >=0.100                   1% [0.00, 0.03]      5% [0.01, 0.11]  0.55 [0.45, 0.66] 28/50  1.7/1.6
+  SAE, >=0.150                  14% [0.08, 0.22]     20% [0.12, 0.30]  0.55 [0.45, 0.66] 26/50  1.5/1.3
+  resid, >=0.898                43% [0.36, 0.51]     75% [0.65, 0.84]  0.67 [0.61, 0.73] 35/50  1.2/0.6
+  resid, >=0.908                62% [0.54, 0.69]     91% [0.86, 0.96]  0.66 [0.61, 0.70] 31/50  0.9/0.3
+  resid, >=0.915                76% [0.68, 0.82]     96% [0.92, 0.99]  0.61 [0.57, 0.65] 26/50  0.7/0.1
+  resid-bdec, token              0% [0.00, 0.00]      0% [0.00, 0.00]  0.49 [0.41, 0.57] 48/50  6.9/5.8
+  resid-bdec, >=0.580           32% [0.23, 0.41]     63% [0.52, 0.74]  0.68 [0.60, 0.76] 39/50  1.5/0.8
+  resid-bdec, >=0.608           46% [0.37, 0.57]     81% [0.72, 0.89]  0.70 [0.64, 0.77] 35/50  1.1/0.5
+  resid-bdec, >=0.660           74% [0.65, 0.83]     96% [0.92, 0.99]  0.61 [0.57, 0.66] 24/50  0.6/0.1
   want: fires rarely on related, often on unrelated; AUROC near 1; the right
         belief flagged; few flags on unrelated prompts. 'right' in token mode is
-        inflated: it flags several beliefs per prompt.
+        inflated: it flags several beliefs per prompt. Residual thresholds are
+        the 50/75/90th percentiles of UNRELATED prompts' pooled best-match
+        cosine (cosine scales differ by key type), so they are fit on this set.

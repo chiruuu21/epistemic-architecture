@@ -47,6 +47,18 @@ class TopKSAEEncoder(nn.Module):
         self.W_enc = nn.Parameter(torch.randn(d_model, dict_size) * 0.02, requires_grad=False)
         self.b_enc = nn.Parameter(torch.zeros(dict_size), requires_grad=False)
 
+    @property
+    def d_in(self) -> int:
+        return self.W_enc.shape[0]
+
+    @property
+    def d_out(self) -> int:
+        return self.W_enc.shape[1]
+
+    @property
+    def device(self) -> torch.device:
+        return self.W_enc.device
+
     @torch.no_grad()
     def forward(self, z: torch.Tensor) -> torch.Tensor:
         """z: (..., d_model) -> c: (..., dict_size), top-k sparse."""
@@ -56,6 +68,48 @@ class TopKSAEEncoder(nn.Module):
         c = torch.zeros_like(pre_act)
         c.scatter_(-1, topk_idx, topk_vals)
         return c
+
+
+class ResidualKeyEncoder(nn.Module):
+    """Concept key = the residual vector itself, minus a fixed center.
+
+    A drop-in for TopKSAEEncoder (same d_in / d_out / device / forward
+    contract) that skips the SAE. On GPT-2 layer 8, mean-pooled residuals
+    retrieve the right belief more often than mean-pooled SAE codes
+    (top-1 0.72 vs 0.50 on 50 queries, paired diff +0.22, 95% CI
+    [0.08, 0.36]; analysis_relevance.py) -- top-k sparse codes discard
+    part of what the dense vector carries.
+
+    Raw residual cosines are squeezed into ~0.85-0.92 for any two
+    sentences (the space is anisotropic: everything shares a large common
+    direction), so the center matters. sae_loader.load_residual_key_encoder
+    uses the SAE's b_dec, initialised as the geometric median of this
+    layer's activations over OpenWebText -- an outside-data estimate of
+    that common direction, nothing fit on our own prompts.
+    """
+
+    def __init__(self, d_model: int, center: torch.Tensor | None = None):
+        super().__init__()
+        c = torch.zeros(d_model) if center is None else center.detach().float().clone()
+        if c.shape != (d_model,):
+            raise ValueError(f"center has shape {tuple(c.shape)}, expected ({d_model},)")
+        self.register_buffer("center", c)
+
+    @property
+    def d_in(self) -> int:
+        return self.center.shape[0]
+
+    @property
+    def d_out(self) -> int:
+        return self.center.shape[0]
+
+    @property
+    def device(self) -> torch.device:
+        return self.center.device
+
+    @torch.no_grad()
+    def forward(self, z: torch.Tensor) -> torch.Tensor:
+        return z - self.center
 
 
 class BeliefGate(nn.Module):
@@ -93,7 +147,8 @@ class BeliefGate(nn.Module):
 
     def __init__(self, d_model: int, dict_size: int = 4096, sae_k: int = 32,
                  theta_recon: float = 0.15, device: str | torch.device = "cpu",
-                 encoder: TopKSAEEncoder | None = None, retrieval: str = "token",
+                 encoder: TopKSAEEncoder | ResidualKeyEncoder | None = None,
+                 retrieval: str = "token",
                  theta_rel: float = 0.15, min_ctx: int = 3):
         super().__init__()
         if retrieval not in ("token", "context"):
@@ -113,12 +168,12 @@ class BeliefGate(nn.Module):
         self.device = torch.zeros(1, device=device).device
         if encoder is None:
             encoder = TopKSAEEncoder(d_model, dict_size, k=sae_k)
-        elif encoder.W_enc.shape[0] != d_model:
+        elif encoder.d_in != d_model:
             # a pretrained SAE is tied to one model's residual width; a
             # mismatch here means the wrong SAE for this model, not a
             # shape to broadcast around
             raise ValueError(
-                f"encoder expects d_model={encoder.W_enc.shape[0]}, gate built for {d_model}"
+                f"encoder expects d_model={encoder.d_in}, gate built for {d_model}"
             )
         self.encoder = encoder.to(self.device)
         self.store = BeliefStore()
