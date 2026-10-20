@@ -35,8 +35,9 @@ TWO THINGS THE WIRING HAS TO GET RIGHT, both of which fail silently:
 SCOPE. This owns control flow and state, not the placeholder internals it
 drives. Known placeholders, all documented at their definitions and none
 of them fixed here:
-  - TopKSAEEncoder uses random frozen weights, so concept keys are random
-    projections and "semantically related" is not yet semantic.
+  - TopKSAEEncoder uses random frozen weights by default, so concept keys
+    are random projections. Pass encoder=load_pretrained_sae() (and real
+    activations via lm_hook.GPT2Activations) for meaningful keys.
   - FOKGate.thought_fn is an MLP, not Quiet-STaR rationale generation.
   - `ffn` defaults to identity; supply a real FFN to place the gates in a
     genuine transformer block.
@@ -83,10 +84,11 @@ class EpTLoop:
         eta_reinforce: float = 0.05,
         eta_inhibit: float = 0.05,
         rif_k: int = 5,
+        encoder=None,
     ):
         self.belief_gate = BeliefGate(
             d_model=d_model, dict_size=dict_size, sae_k=sae_k,
-            theta_recon=theta_recon, device=device,
+            theta_recon=theta_recon, device=device, encoder=encoder,
         )
         self.device = self.belief_gate.device
         self.fok_gate = FOKGate(d_model=d_model, theta_fok=theta_fok).to(self.device)

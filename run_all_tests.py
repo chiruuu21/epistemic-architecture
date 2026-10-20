@@ -21,6 +21,7 @@ MODULES = [
     ("test_reconsolidation.py", "Reconsolidation: contest/reinforce branches, RIF, skips"),
     ("test_nli_backend.py", "NLI backend: label maps, thresholds, abstention, batching"),
     ("test_ept_loop.py", "End-to-end loop: claim extraction, flag accumulation"),
+    ("test_sae_loader.py", "SAE loader: tensor mapping, b_dec, TopK, refusals"),
 ]
 
 WIDTH = 78
@@ -81,6 +82,8 @@ def main():
     print("    smoke_test_nli_backend.py   — live NLI verdicts + end-to-end run")
     print("    smoke_test_belief_gate.py   — belief gate on MPS")
     print("    smoke_test_fok_gate.py      — FOK gate triggering and gradients")
+    print("    smoke_test_sae_semantics.py — pretrained SAE fidelity + semantic retrieval")
+    print("    smoke_test_lm_loop.py       — EpTLoop on real GPT-2 hidden states")
 
 
 if __name__ == "__main__":

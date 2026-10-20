@@ -31,11 +31,12 @@ from belief_store import BeliefStore, SourceTier, ContentType
 class TopKSAEEncoder(nn.Module):
     """Frozen SAE-style sparse encoder: c = TopK(Wenc(z - bpre) + benc).
 
-    This is a structural placeholder -- in the real pipeline you'd load
-    pretrained SAE weights (e.g. an Eleuther/GemmaScope-style SAE trained
-    on the target model's residual stream), not train this from scratch.
-    Frozen by construction (Section 2.2 / Fig. in paper: "SAE Feature
-    Decoder -- frozen").
+    Constructed directly, the weights are random -- a structural
+    placeholder only, concept keys are random projections. For real
+    concept extraction use sae_loader.load_pretrained_sae(), which fills
+    the same three tensors from a pretrained SAE trained on the target
+    model's residual stream. Frozen by construction (Section 2.2 / Fig.
+    in paper: "SAE Feature Decoder -- frozen").
     """
 
     def __init__(self, d_model: int, dict_size: int, k: int = 32):
@@ -67,13 +68,23 @@ class BeliefGate(nn.Module):
     """
 
     def __init__(self, d_model: int, dict_size: int = 4096, sae_k: int = 32,
-                 theta_recon: float = 0.15, device: str | torch.device = "cpu"):
+                 theta_recon: float = 0.15, device: str | torch.device = "cpu",
+                 encoder: TopKSAEEncoder | None = None):
         super().__init__()
         # Resolve to the concrete device (e.g. "mps:0", "cuda:0") by
         # querying a real tensor, rather than trusting the bare
         # torch.device(device) string -- see .type comparison note below.
         self.device = torch.zeros(1, device=device).device
-        self.encoder = TopKSAEEncoder(d_model, dict_size, k=sae_k).to(self.device)
+        if encoder is None:
+            encoder = TopKSAEEncoder(d_model, dict_size, k=sae_k)
+        elif encoder.W_enc.shape[0] != d_model:
+            # a pretrained SAE is tied to one model's residual width; a
+            # mismatch here means the wrong SAE for this model, not a
+            # shape to broadcast around
+            raise ValueError(
+                f"encoder expects d_model={encoder.W_enc.shape[0]}, gate built for {d_model}"
+            )
+        self.encoder = encoder.to(self.device)
         self.store = BeliefStore()
         self.theta_recon = theta_recon
 
