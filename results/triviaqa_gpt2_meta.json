@@ -1,0 +1,18 @@
+{
+  "model": "openai-community/gpt2",
+  "layer": 8,
+  "d_model": 768,
+  "dtype": "float16",
+  "device": "cuda:0",
+  "n": 3000,
+  "seed": 0,
+  "accuracy_em": 0.048666666666666664,
+  "loop_check": {
+    "n": 32,
+    "max_abs_diff": 0.00011914968490600586
+  },
+  "seconds": 69.8,
+  "torch": "2.14.1+cu130",
+  "transformers": "5.17.0",
+  "gpu": "Tesla T4"
+}

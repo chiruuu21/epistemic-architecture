@@ -1,0 +1,18 @@
+{
+  "model": "Qwen/Qwen2.5-3B",
+  "layer": 24,
+  "d_model": 2048,
+  "dtype": "float16",
+  "device": "cuda:0",
+  "n": 3000,
+  "seed": 0,
+  "accuracy_em": 0.528,
+  "loop_check": {
+    "n": 32,
+    "max_abs_diff": 0.00011134147644042969
+  },
+  "seconds": 594.1,
+  "torch": "2.14.1+cu130",
+  "transformers": "5.17.0",
+  "gpu": "Tesla T4"
+}

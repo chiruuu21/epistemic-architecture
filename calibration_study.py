@@ -161,11 +161,19 @@ def run_split(recs, keys, split_seed, store_seed, poison=None, informative=True)
     sp_cal = cal[use_store[cal]]
     platt_store = PlattScaler().fit(feats[sp_cal], store_ok[sp_cal].astype(float))
     pik_graded = np.where(use_store, platt_store.predict(feats), lm_cal)
+    # store-only PIK (paper Section 3.4: confidence from the Belief Store
+    # alone, whichever path answers) -- one Platt map of the match cosine
+    pik_store_only = PlattScaler().fit(sim[cal, None], sys_ok[cal]).predict(sim[:, None])
+    # combined PIK: one map over both signals (store cosine and the LM's
+    # own answer logit) for every question, path-agnostic
+    both = np.stack([sim, logit(lm_raw), use_store.astype(float)], 1)
+    pik_both = PlattScaler().fit(both[cal], sys_ok[cal]).predict(both)
 
     return {"cal": cal, "test": test, "stored": stored, "lm_ok": lm_ok, "lm_raw": lm_raw,
             "lm_cal": lm_cal, "const": const, "sim": sim, "best": best, "store_ok": store_ok,
             "theta": theta, "use_store": use_store, "sys_ok": sys_ok,
             "pik_binary": pik_binary, "pik_graded": pik_graded, "store": st,
+            "pik_store_only": pik_store_only, "pik_both": pik_both,
             "platt_store": platt_store.coef_}
 
 
@@ -214,9 +222,19 @@ def report(tag, recs, keys, meta, splits):
     p(f"\nC. EpT system (store answer if relevant, else LM): accuracy "
       f"{r['sys_ok'][test].mean():.3f} vs LM alone {r['lm_ok'][test].mean():.3f}")
     p(HEADER)
-    sC = {k: evaluate(r[k], r["sys_ok"], test, seed) for k in ("pik_binary", "pik_graded")}
+    sC = {k: evaluate(r[k], r["sys_ok"], test, seed)
+          for k in ("pik_binary", "pik_store_only", "pik_graded", "pik_both")}
     p(row("binary PIK (paper: weff or 0)", sC["pik_binary"]))
-    p(row("graded PIK (held-out Platt)", sC["pik_graded"]))
+    p(row("graded, store signal only", sC["pik_store_only"]))
+    p(row("graded, per path (store | LM)", sC["pik_graded"]))
+    p(row("graded, one map (store + LM)", sC["pik_both"]))
+    p("  store-only PIK cannot see what the LM knows from its weights; the two rows")
+    p("  below it add the LM's own answer probability (parametric confidence).")
+    p("  per-path breakdown of 'graded, per path' (test):")
+    for nm, m in (("store path", r["use_store"][test]), ("FOK fallback (LM)", ~r["use_store"][test])):
+        sp_ = summary(r["pik_graded"][test][m], r["sys_ok"][test][m])
+        p(f"    {nm:<20} n={sp_['n']:>5}  acc {sp_['accuracy']:.3f}  ECE {sp_['ece']:.3f}  "
+          f"AUROC {sp_['auroc']:.3f}")
     a, b = r["platt_store"][:2], r["platt_store"][2]
     p(f"  graded store-path map: sigmoid({a[0]:.1f}*cos {a[1]:+.2f}*log weff {b:+.2f})")
     p("  reliability, graded PIK on test (equal-width bins):")
@@ -237,7 +255,8 @@ def report(tag, recs, keys, meta, splits):
     p("  real-world tiers are that informative.")
 
     p(f"\nRobustness: test ECE across {splits} calibration/test splits (mean, min-max)")
-    rows = {"LM Platt": [], "constant": [], "EpT binary PIK": [], "EpT graded PIK": []}
+    rows = {"LM Platt": [], "constant": [], "EpT binary PIK": [], "EpT store-only PIK": [],
+            "EpT graded PIK": [], "EpT one-map PIK": []}
     aus = {k: [] for k in rows}
     for s in range(splits):
         rs = run_split(recs, keys, split_seed=100 + s, store_seed=1)
@@ -245,7 +264,9 @@ def report(tag, recs, keys, meta, splits):
         for name, conf, ok in (("LM Platt", rs["lm_cal"], rs["lm_ok"]),
                                ("constant", rs["const"], rs["lm_ok"]),
                                ("EpT binary PIK", rs["pik_binary"], rs["sys_ok"]),
-                               ("EpT graded PIK", rs["pik_graded"], rs["sys_ok"])):
+                               ("EpT store-only PIK", rs["pik_store_only"], rs["sys_ok"]),
+                               ("EpT graded PIK", rs["pik_graded"], rs["sys_ok"]),
+                               ("EpT one-map PIK", rs["pik_both"], rs["sys_ok"])):
             rows[name].append(ece(conf[t], ok[t]))
             aus[name].append(auroc(conf[t][ok[t] == 1], conf[t][ok[t] == 0]))
     for name in rows:
