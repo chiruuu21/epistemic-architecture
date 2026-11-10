@@ -26,3 +26,6 @@ dist/
 # Environment secrets
 .env
 .env.local
+
+# Colab results bundle
+epstloop_results.zip

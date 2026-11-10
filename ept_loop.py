@@ -88,11 +88,14 @@ class EpTLoop:
         retrieval: str = "token",
         theta_rel: float = 0.15,
         min_ctx: int = 3,
+        confidence: str = "binary",
+        tau: float = 0.05,
     ):
         self.belief_gate = BeliefGate(
             d_model=d_model, dict_size=dict_size, sae_k=sae_k,
             theta_recon=theta_recon, device=device, encoder=encoder,
             retrieval=retrieval, theta_rel=theta_rel, min_ctx=min_ctx,
+            confidence=confidence, tau=tau,
         )
         self.device = self.belief_gate.device
         self.fok_gate = FOKGate(d_model=d_model, theta_fok=theta_fok).to(self.device)

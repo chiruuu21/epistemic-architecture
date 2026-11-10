@@ -23,6 +23,7 @@ MODULES = [
     ("test_ept_loop.py", "End-to-end loop: claim extraction, flag accumulation"),
     ("test_sae_loader.py", "SAE loader: tensor mapping, b_dec, TopK, refusals"),
     ("test_context_retrieval.py", "Context retrieval: running mean, relevance cutoff, warm-up"),
+    ("test_calibration.py", "Calibration: ECE/AUROC/Platt, TriviaQA matching, graded PIK"),
 ]
 
 WIDTH = 78

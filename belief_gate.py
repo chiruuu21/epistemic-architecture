@@ -143,16 +143,37 @@ class BeliefGate(nn.Module):
         belief actually used is checked against the output by NLI.
     last_sim / last_relevant hold the most recent pass's match cosine and
     relevance mask for inspection.
+
+    CONFIDENCE (context mode only)
+    "binary" (default): weff is the matched belief's weff above theta_rel
+        and 0 below it, so PIK is either 0 or ~0.81 -- it can rank, but it
+        cannot be calibrated (two values, two reliability bins).
+    "graded": weff = nearest belief's weff * sigmoid((sim - theta_rel) / tau).
+        Confidence rises smoothly with match quality; trust, decay and
+        contested state still multiply in through the nearest weff.
+        Warm-up positions stay at 0. Gating is unchanged: a token below
+        theta_rel still passes through unscaled. theta_rel and tau should
+        be fit on held-out data (analysis_heldout.py, calibration_study.py).
     """
 
     def __init__(self, d_model: int, dict_size: int = 4096, sae_k: int = 32,
                  theta_recon: float = 0.15, device: str | torch.device = "cpu",
                  encoder: TopKSAEEncoder | ResidualKeyEncoder | None = None,
                  retrieval: str = "token",
-                 theta_rel: float = 0.15, min_ctx: int = 3):
+                 theta_rel: float = 0.15, min_ctx: int = 3,
+                 confidence: str = "binary", tau: float = 0.05):
         super().__init__()
         if retrieval not in ("token", "context"):
             raise ValueError(f"retrieval must be 'token' or 'context', got {retrieval!r}")
+        if confidence not in ("binary", "graded"):
+            raise ValueError(f"confidence must be 'binary' or 'graded', got {confidence!r}")
+        if confidence == "graded" and retrieval != "context":
+            raise ValueError("confidence='graded' needs retrieval='context' (it is defined "
+                             "relative to theta_rel)")
+        if not tau > 0:
+            raise ValueError(f"tau must be > 0, got {tau}")
+        self.confidence = confidence
+        self.tau = tau
         if retrieval == "context" and not theta_rel > 0:
             # warm-up masking relies on a zero query (cos 0) being irrelevant
             raise ValueError(f"theta_rel must be > 0 in context mode, got {theta_rel}")
@@ -254,6 +275,10 @@ class BeliefGate(nn.Module):
         self.last_sim = sim.reshape(B, S)
         self.last_relevant = relevant
 
+        if self.confidence == "graded":
+            near = self.store.last_nearest_weff.reshape(B, S)
+            g = 1.0 / (1.0 + np.exp(-(sim.reshape(B, S) - self.theta_rel) / self.tau))
+            weff_np = (near * g * warm.cpu().numpy()[None, :]).astype(np.float32)
         weff = torch.from_numpy(weff_np).to(self.device).reshape(B, S)
         rel_t = torch.from_numpy(relevant).to(self.device)
         gate_w = torch.where(rel_t, weff, torch.ones_like(weff))  # pass-through if nothing relevant

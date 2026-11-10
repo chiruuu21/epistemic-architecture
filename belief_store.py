@@ -224,6 +224,7 @@ class BeliefStore:
         entries = list(self._entries.values())
         M = concept_keys.shape[0]
         if not entries:
+            self.last_nearest_weff = np.zeros(M, dtype=np.float32)
             empty = (np.zeros(M, dtype=np.float32), [])
             return (*empty, np.zeros(M, dtype=np.float32)) if return_sim else empty
 
@@ -253,6 +254,10 @@ class BeliefStore:
         weff_all = weight_arr * trust_arr * decay_factor * state_factor  # (N,)
         relevant = best_sim >= min_sim if min_sim is not None else np.ones(M, dtype=bool)
         weff = np.where(relevant, weff_all[best_idx], 0.0)  # (M,)
+        # nearest entry's weff before the relevance mask, for graded
+        # confidence (BeliefGate confidence="graded"); read-only, no
+        # bookkeeping depends on it
+        self.last_nearest_weff = weff_all[best_idx].astype(np.float32)
 
         # bookkeeping: update last_accessed / access_count for matched entries.
         # np.unique so an entry matched by many tokens gets one last_accessed

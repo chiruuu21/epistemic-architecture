@@ -1,0 +1,9 @@
+# Local environment (macOS, Python 3.12.6) -- the versions all results so far were produced with.
+torch==2.13.0
+transformers==5.17.0
+tokenizers==0.23.2
+safetensors==0.8.0
+huggingface_hub==1.33.0
+numpy==2.5.2
+# Only needed for collect_triviaqa.py (downloads TriviaQA); installed on Colab.
+datasets

@@ -1,0 +1,44 @@
+==============================================================================
+1. Held-out threshold (Report 3 rule: 75th pct of unrelated pooled cosine)
+==============================================================================
+  theta_rel: in-sample 0.608; held-out median 0.606 [0.596, 0.624]
+  metric                               in-sample     held-out median [2.5-97.5%]
+  FOK fires, related tokens                 0.46        0.47 [0.33, 0.61]
+  FOK fires, unrelated tokens               0.81        0.81 [0.67, 0.94]
+  PIK AUROC (tokens)                        0.65        0.64 [0.55, 0.72]
+  FOK fires at last token, related          0.20        0.20 [0.08, 0.32]
+  FOK fires at last token, unrelated        0.74        0.72 [0.48, 0.96]
+
+==============================================================================
+2. FOK fire rate by token position (theta_rel 0.608, related prompts)
+==============================================================================
+  position (from first scored token)      related  unrelated    n
+  3                                          0.88       0.84   50
+  4                                          0.72       0.86   50
+  5                                          0.62       0.82   50
+  6                                          0.46       0.80   50
+  7                                          0.36       0.79   50
+  8                                          0.30       0.80   50
+  9                                          0.30       0.79   50
+  10                                         0.34       0.75   47
+  11                                         0.30       1.00   43
+  12                                         0.36       0.00   33
+  13                                         0.40        nan   25
+  14                                         0.44        nan   16
+  related: first 3 scored tokens 0.74 vs later tokens 0.36
+
+==============================================================================
+3. Graded vs binary PIK (token-level AUROC related vs unrelated, held-out theta)
+==============================================================================
+  binary                 token AUROC 0.650   last-token (prompt) AUROC 0.716
+  graded, tau=0.02       token AUROC 0.727   last-token (prompt) AUROC 0.843
+  graded, tau=0.05       token AUROC 0.727   last-token (prompt) AUROC 0.843
+  graded, tau=0.1        token AUROC 0.726   last-token (prompt) AUROC 0.843
+  Pooled-cosine AUROC (upper bound for any monotone map of it): 0.843
+
+Note on Report 3's PIK AUROC (0.70). With t_now held fixed (this file) binary
+PIK takes 3 distinct values and token AUROC is 0.651. Advancing t_now by one
+per prompt, as the Report 3 run did through lm_hook, gives 0.704 with 54
+distinct values: decay over the run made "binary" PIK slightly graded by how
+recently each belief was retrieved. The 0.70 therefore partly reflects
+access recency, not match quality. (Checked 2026-11-09.)
