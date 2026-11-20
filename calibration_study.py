@@ -47,7 +47,7 @@ import json
 import numpy as np
 
 from belief_store import SOURCE_TRUST, SourceTier
-from calibration import PlattScaler, bootstrap, ece, logit, reliability, summary, auroc
+from calibration import CombinedPIK, PlattScaler, bootstrap, ece, logit, reliability, summary, auroc
 from triviaqa_data import is_correct
 
 W = 78
@@ -157,10 +157,11 @@ def run_split(recs, keys, split_seed, store_seed, poison=None, informative=True)
     pik_binary = np.where(use_store, w, 0.0)
     # graded PIK: Platt map of (cosine, log weff) on the store path, fit on
     # calibration store-path rows; the FOK path uses the LM's Platt map
-    feats = np.stack([sim, np.log(w)], 1)
-    sp_cal = cal[use_store[cal]]
-    platt_store = PlattScaler().fit(feats[sp_cal], store_ok[sp_cal].astype(float))
-    pik_graded = np.where(use_store, platt_store.predict(feats), lm_cal)
+    # (calibration.CombinedPIK -- the same class EpTLoop.answer_confidence uses)
+    pik_model = CombinedPIK().fit(sim[cal], w[cal], use_store[cal], store_ok[cal],
+                                  lm_raw[cal], lm_ok[cal])
+    pik_graded = pik_model.predict(sim, w, use_store, lm_raw)
+    platt_store = pik_model.store_map
     # store-only PIK (paper Section 3.4: confidence from the Belief Store
     # alone, whichever path answers) -- one Platt map of the match cosine
     pik_store_only = PlattScaler().fit(sim[cal, None], sys_ok[cal]).predict(sim[:, None])
@@ -174,7 +175,7 @@ def run_split(recs, keys, split_seed, store_seed, poison=None, informative=True)
             "theta": theta, "use_store": use_store, "sys_ok": sys_ok,
             "pik_binary": pik_binary, "pik_graded": pik_graded, "store": st,
             "pik_store_only": pik_store_only, "pik_both": pik_both,
-            "platt_store": platt_store.coef_}
+            "platt_store": platt_store.coef_, "pik_model": pik_model}
 
 
 def report(tag, recs, keys, meta, splits):
@@ -277,7 +278,10 @@ def report(tag, recs, keys, meta, splits):
 
     text = "\n".join(out)
     js = {"meta": meta, "A": sA, "C": sC, "D": sD, "theta_rel": r["theta"],
-          "relevance_auroc": [au, au_ci], "fok_fires": {"stored": fires_st, "not_stored": fires_un}}
+          "relevance_auroc": [au, au_ci], "fok_fires": {"stored": fires_st, "not_stored": fires_un},
+          # fitted per-path map (split 0, calibration half) -- load with
+          # calibration.CombinedPIK.from_dict for EpTLoop(pik_model=...)
+          "pik_model": r["pik_model"].to_dict()}
     return text, js
 
 

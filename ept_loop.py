@@ -90,12 +90,20 @@ class EpTLoop:
         min_ctx: int = 3,
         confidence: str = "binary",
         tau: float = 0.05,
+        rank: str = "cosine",
+        rank_margin: float = 0.05,
+        eta_contest: float = 0.0,
+        dedup_successors: bool = False,
+        supersede: bool = False,
+        rif_min_sim: float = 0.0,
+        contest_min_sim: Optional[float] = None,
+        pik_model=None,
     ):
         self.belief_gate = BeliefGate(
             d_model=d_model, dict_size=dict_size, sae_k=sae_k,
             theta_recon=theta_recon, device=device, encoder=encoder,
             retrieval=retrieval, theta_rel=theta_rel, min_ctx=min_ctx,
-            confidence=confidence, tau=tau,
+            confidence=confidence, tau=tau, rank=rank, rank_margin=rank_margin,
         )
         self.device = self.belief_gate.device
         self.fok_gate = FOKGate(d_model=d_model, theta_fok=theta_fok).to(self.device)
@@ -110,11 +118,23 @@ class EpTLoop:
         self.eta_reinforce = eta_reinforce
         self.eta_inhibit = eta_inhibit
         self.rif_k = rif_k
+        # reconsolidation revisions (reconsolidation.run_reconsolidation_pass
+        # docstring); all off = the paper's update rule
+        self.eta_contest = eta_contest
+        self.dedup_successors = dedup_successors
+        self.supersede = supersede
+        self.rif_min_sim = rif_min_sim
+        self.contest_min_sim = contest_min_sim
+        # calibrated store-plus-model confidence (calibration.CombinedPIK);
+        # see answer_confidence()
+        self.pik_model = pik_model
+        self.decision = None
 
         # entry_id -> BeliefEntry, accumulated across the generation.
         # A dict rather than a list so an entry flagged on many passes is
         # reconsolidated exactly once.
         self._pending: dict[str, BeliefEntry] = {}
+        self._pending_sim: dict[str, float] = {}  # best match per pending entry
         self.stats = {"steps": 0, "tokens": 0, "triggered": 0, "flag_events": 0}
 
     # -- store passthrough --------------------------------------------------
@@ -153,12 +173,28 @@ class EpTLoop:
         on THIS pass (already accumulated internally -- the caller does
         not need to hold on to them).
         """
+        prefill = self.belief_gate._ctx_n == 0
         z_gated, weff, flagged = self.belief_gate(z_attn, t_now=t_now)
+        if prefill and self.belief_gate.retrieval == "context":
+            # the FOK decision point: last prompt token, before any
+            # generated token enters the running mean. This is what
+            # answer_confidence() scores (and what calibration_study.py's
+            # pooled question key reproduces).
+            g = self.belief_gate
+            self.decision = {
+                "sim": g.last_sim[:, -1].copy(),
+                "weff": g.last_nearest_weff[:, -1].copy(),
+                "use_store": g.last_relevant[:, -1].copy(),
+            }
 
         # (1) from the module docstring: BeliefGate just drained the
         # store's flagged buffer. Stash the entries now or they are gone.
+        sims = self.belief_gate.last_flag_sims
         for entry in flagged:
             self._pending[entry.id] = entry
+            s = sims.get(entry.id)
+            if s is not None:
+                self._pending_sim[entry.id] = max(s, self._pending_sim.get(entry.id, -1.0))
 
         z_ffn = self.ffn(z_gated) if self.ffn is not None else z_gated
         z_out, PIK, trigger_mask = self.fok_gate(z_ffn, weff)
@@ -186,12 +222,42 @@ class EpTLoop:
         """Entries flagged so far this generation, in first-flagged order."""
         return list(self._pending.values())
 
+    def answer_confidence(self, lm_prob) -> "np.ndarray":
+        """Calibrated P(IK) for the answer just generated -- store-plus-model
+        confidence (calibration.CombinedPIK; Report 4's revision of the
+        paper's Section 3.4).
+
+        lm_prob: the LM's own probability of its answer (product of the
+            generated tokens' probabilities), shape (B,) or scalar.
+
+        The FOK gate's TRIGGER stays store-based (is anything relevant
+        stored?) because it fires mid-network, before the LM's answer
+        probability exists. The CONFIDENCE reported for the answer is
+        computed afterwards and uses both signals: the store's match
+        quality on the store path, the LM's own probability on the FOK
+        path. Store-only PIK cannot see what the model knows from its
+        weights (ECE 0.085 on Qwen2.5-3B vs 0.012 for this).
+        """
+        import numpy as np
+        if self.pik_model is None:
+            raise RuntimeError("no pik_model: pass EpTLoop(pik_model=CombinedPIK...)")
+        if self.decision is None:
+            raise RuntimeError("no decision recorded: run a prompt in context mode first")
+        d = self.decision
+        lm = np.broadcast_to(np.asarray(lm_prob, dtype=np.float64), d["sim"].shape)
+        return self.pik_model.predict(d["sim"], d["weff"], d["use_store"], lm)
+
     def finish_generation(self, output_text: str, t_now: int,
-                          claims: Optional[dict[str, str]] = None) -> dict:
+                          claims: Optional[dict[str, str]] = None,
+                          claim_tier: Optional[SourceTier] = None) -> dict:
         """Extract claims from the generated text and reconsolidate.
 
         claims: supply explicitly to bypass extraction (useful in tests
                 and when an upstream pipeline already has attributions).
+        claim_tier: where output_text came from. None (default) = the
+                model's own generation, so corrections are INFERRED as in
+                the paper. Pass the source's tier when the text is observed
+                context (Experiment 4.2's evidence is VERIFIED).
 
         Returns run_reconsolidation_pass's summary, plus:
             n_flagged        -- entries accumulated this generation
@@ -214,6 +280,13 @@ class EpTLoop:
             eta_inhibit=self.eta_inhibit,
             rif_k=self.rif_k,
             flagged=flagged,  # (1) explicit -- the buffer is already empty
+            claim_tier=claim_tier,
+            eta_contest=self.eta_contest,
+            dedup_successors=self.dedup_successors,
+            supersede=self.supersede,
+            rif_min_sim=self.rif_min_sim,
+            match_sims=dict(self._pending_sim),
+            contest_min_sim=self.contest_min_sim,
         )
 
         summary["n_flagged"] = len(flagged)
@@ -221,12 +294,14 @@ class EpTLoop:
         summary["claims"] = claims
 
         self._pending.clear()
+        self._pending_sim.clear()
         self.belief_gate.reset_context()
         return summary
 
     def reset_generation(self) -> None:
         """Drop accumulated flags without reconsolidating (aborted run)."""
         self._pending.clear()
+        self._pending_sim.clear()
         self.belief_gate.reset_context()
 
     def __repr__(self) -> str:

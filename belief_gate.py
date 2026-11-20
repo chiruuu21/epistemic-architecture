@@ -141,8 +141,17 @@ class BeliefGate(nn.Module):
         A relevant match is flagged on every retrieval (theta_recon is
         not consulted; context codes never get near cos 0.85), so each
         belief actually used is checked against the output by NLI.
-    last_sim / last_relevant hold the most recent pass's match cosine and
-    relevance mask for inspection.
+    last_sim / last_relevant / last_nearest_weff hold the most recent
+    pass's best-match cosine, relevance mask and matched belief's weff
+    (before the relevance mask) for inspection.
+
+    RANKING (rank=)
+    "cosine" (default, the paper): the nearest key answers.
+    "trust": among beliefs within rank_margin of the best cosine, the one
+        with the highest weff answers (BeliefStore Fix 3). Needed for a
+        correction to ever win retrieval over the belief it contests.
+    "lineage": like trust, but only among versions of the best match's
+        own belief (its root and successors). Never crosses topics.
 
     CONFIDENCE (context mode only)
     "binary" (default): weff is the matched belief's weff above theta_rel
@@ -161,8 +170,13 @@ class BeliefGate(nn.Module):
                  encoder: TopKSAEEncoder | ResidualKeyEncoder | None = None,
                  retrieval: str = "token",
                  theta_rel: float = 0.15, min_ctx: int = 3,
-                 confidence: str = "binary", tau: float = 0.05):
+                 confidence: str = "binary", tau: float = 0.05,
+                 rank: str = "cosine", rank_margin: float = 0.05):
         super().__init__()
+        if rank not in ("cosine", "trust", "lineage"):
+            raise ValueError(f"rank must be 'cosine', 'trust' or 'lineage', got {rank!r}")
+        self.rank = rank
+        self.rank_margin = rank_margin
         if retrieval not in ("token", "context"):
             raise ValueError(f"retrieval must be 'token' or 'context', got {retrieval!r}")
         if confidence not in ("binary", "graded"):
@@ -232,12 +246,15 @@ class BeliefGate(nn.Module):
         # vectorized numpy matmul, one on-device transfer back.
         c_flat = c.reshape(B * S, -1).detach().cpu().numpy()
         weff_np, _flagged_ids, sim = self.store.query_batch(
-            c_flat, t_now=t_now, theta_recon=self.theta_recon, return_sim=True)
+            c_flat, t_now=t_now, theta_recon=self.theta_recon, return_sim=True,
+            rank=self.rank, rank_margin=self.rank_margin)
         weff = torch.from_numpy(weff_np).to(self.device).reshape(B, S)
         self.last_sim = sim.reshape(B, S)
         self.last_relevant = np.ones((B, S), dtype=bool)
+        self.last_nearest_weff = self.store.last_nearest_weff.reshape(B, S)
 
         z_gated = z_attn * weff.unsqueeze(-1)  # broadcast scalar weight over d_model
+        self.last_flag_sims = dict(self.store.last_flag_sims)
         flagged = self.store.flagged_this_pass()
         return z_gated, weff, flagged
 
@@ -270,10 +287,12 @@ class BeliefGate(nn.Module):
         q = q * warm[None, :, None]
         q_flat = q.reshape(B * S, -1).detach().cpu().numpy()
         weff_np, _flagged_ids, sim = self.store.query_batch(
-            q_flat, t_now=t_now, theta_recon=0.0, min_sim=self.theta_rel, return_sim=True)
+            q_flat, t_now=t_now, theta_recon=0.0, min_sim=self.theta_rel, return_sim=True,
+            rank=self.rank, rank_margin=self.rank_margin)
         relevant = sim.reshape(B, S) >= self.theta_rel
         self.last_sim = sim.reshape(B, S)
         self.last_relevant = relevant
+        self.last_nearest_weff = self.store.last_nearest_weff.reshape(B, S)
 
         if self.confidence == "graded":
             near = self.store.last_nearest_weff.reshape(B, S)
@@ -283,6 +302,7 @@ class BeliefGate(nn.Module):
         rel_t = torch.from_numpy(relevant).to(self.device)
         gate_w = torch.where(rel_t, weff, torch.ones_like(weff))  # pass-through if nothing relevant
         z_gated = z_attn * gate_w.unsqueeze(-1)
+        self.last_flag_sims = dict(self.store.last_flag_sims)
         flagged = self.store.flagged_this_pass()
         return z_gated, weff, flagged
 

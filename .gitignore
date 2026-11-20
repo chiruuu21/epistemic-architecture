@@ -29,3 +29,7 @@ dist/
 
 # Colab results bundle
 epstloop_results.zip
+
+# Progress reports and guides (kept local)
+*.docx
+~$*.docx

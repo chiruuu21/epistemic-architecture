@@ -187,3 +187,72 @@ class PlattScaler:
         if self.coef_ is None:
             raise RuntimeError("fit() first")
         return sigmoid(self._design(X) @ self.coef_)
+
+
+class CombinedPIK:
+    """Store-plus-model P(IK) -- Report 4's revision to the paper's Section 3.4.
+
+    The paper's PIK = f(mean weff) sees only the Belief Store, so it cannot
+    know what the LM already knows from its weights: on Qwen2.5-3B, which
+    answers half of TriviaQA closed-book, store-only PIK has ECE 0.085.
+    This is the "graded, per path" confidence that met the target on both
+    models (ECE 0.021 GPT-2, 0.012 Qwen; calibration_study.py):
+
+        store path (best match >= theta_rel, the store answers):
+            PIK = sigmoid(a * cos + b * log weff + c)
+        FOK path (nothing relevant stored, the LM answers):
+            PIK = sigmoid(a' * logit(p_lm) + c')     (Platt on the LM's
+                                                      own answer probability)
+
+    One class, used by both calibration_study.py (offline, on saved keys)
+    and EpTLoop.answer_confidence (live), so the number the study reports
+    is the number the loop produces. Fit on a calibration split only.
+    """
+
+    def __init__(self, l2: float = 1e-3):
+        self.l2 = l2
+        self.store_map = None
+        self.lm_map = None
+
+    @staticmethod
+    def _store_feats(sim, weff):
+        sim = np.asarray(sim, dtype=np.float64).ravel()
+        weff = np.asarray(weff, dtype=np.float64).ravel()
+        return np.stack([sim, np.log(np.clip(weff, 1e-6, None))], 1)
+
+    def fit(self, sim, weff, use_store, store_ok, lm_prob, lm_ok):
+        """All arrays over the same calibration rows. The store map is fit on
+        the rows where the store answered, the LM map on all rows (the LM's
+        answer probability is defined for every question)."""
+        use_store = np.asarray(use_store, dtype=bool).ravel()
+        if not use_store.any():
+            raise ValueError("no store-path rows to fit the store map on")
+        feats = self._store_feats(sim, weff)
+        self.store_map = PlattScaler(l2=self.l2).fit(
+            feats[use_store], np.asarray(store_ok, dtype=np.float64).ravel()[use_store])
+        self.lm_map = PlattScaler(l2=self.l2).fit(
+            logit(lm_prob), np.asarray(lm_ok, dtype=np.float64).ravel())
+        return self
+
+    def predict(self, sim, weff, use_store, lm_prob):
+        if self.store_map is None:
+            raise RuntimeError("fit() first")
+        use_store = np.asarray(use_store, dtype=bool).ravel()
+        p_store = self.store_map.predict(self._store_feats(sim, weff))
+        p_lm = self.lm_map.predict(logit(lm_prob))
+        return np.where(use_store, p_store, p_lm)
+
+    # -- persistence: fit once in calibration_study, load in the loop -------
+
+    def to_dict(self) -> dict:
+        return {"store_coef": self.store_map.coef_.tolist(),
+                "lm_coef": self.lm_map.coef_.tolist(), "l2": self.l2}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "CombinedPIK":
+        obj = cls(l2=d.get("l2", 1e-3))
+        obj.store_map = PlattScaler(l2=obj.l2)
+        obj.store_map.coef_ = np.asarray(d["store_coef"], dtype=np.float64)
+        obj.lm_map = PlattScaler(l2=obj.l2)
+        obj.lm_map.coef_ = np.asarray(d["lm_coef"], dtype=np.float64)
+        return obj
