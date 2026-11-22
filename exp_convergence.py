@@ -8,7 +8,9 @@ consistent beliefs (evidence agrees: should be reinforced, never contested)
 and 10 unrelated contexts (nothing stored: should change nothing), so
 cross-talk, false contests and RIF side-effects are measured, not assumed.
 
-    python exp_convergence.py            # ~2 min on a laptop CPU
+    python exp_convergence.py               # ~2 min on a laptop CPU
+    python exp_convergence.py --data fresh  # held-out replication set
+                                            # (convergence_data_fresh.py)
 
 PIPELINE (real components end to end, nothing mocked)
   keys      GPT-2 small layer 8, residual - b_dec (ResidualKeyEncoder;
@@ -266,6 +268,17 @@ def nli_ceiling(nli):
 
 
 def main():
+    import argparse
+    global CONTRADICTED, CONSISTENT, UNRELATED
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--data", choices=["original", "fresh"], default="original")
+    args = ap.parse_args()
+    suffix = ""
+    if args.data == "fresh":
+        # same frozen settings, facts never used for tuning
+        from convergence_data_fresh import CONSISTENT, CONTRADICTED, UNRELATED
+        suffix = "_fresh"
+
     from lm_hook import GPT2Activations
     from sae_loader import load_residual_key_encoder
 
@@ -279,7 +292,8 @@ def main():
     out, p = [], None
     p = out.append
     p("=" * W)
-    p("Experiment 4.2: belief convergence under contradicting evidence".center(W))
+    p(f"Experiment 4.2: belief convergence under contradicting evidence"
+      f"{' (fresh set)' if suffix else ''}".center(W))
     p("=" * W)
     p(f"  GPT-2 small layer 8, residual - b_dec keys, context retrieval, theta_rel {THETA_REL}")
     p(f"  NLI {nli.model_id.split('/')[-1]} (contradiction >= {nli.contradiction_threshold}, "
@@ -309,7 +323,7 @@ def main():
     p(f"  unrelated contexts that retrieved something: {s0['unrelated_flags']} flags "
       f"over {3 * len(UNRELATED)} contexts")
 
-    p(f"\nA. Convergence (20 contradicted beliefs). switch = probe answers with the correction,")
+    p(f"\nA. Convergence ({len(CONTRADICTED)} contradicted beliefs). switch = probe answers with the correction,")
     p(f"  over the {s0['n_reach']} topics whose probe question reaches the belief at all (t0)")
     p(f"  {'config':<20}{'switch t1/t2/t3':>17}{'w(A) t0->t3':>14}{'weff(A) t3':>11}"
       f"{'weff(B) t3':>11}{'succ/A':>8}{'A final states':>22}")
@@ -340,7 +354,7 @@ def main():
     g = summaries["revised, both + gate"]
     p(f"  contest gate held back {g['gated']} contradictions, {g['gated_own']} of them true ones")
 
-    p("\nC. Final probe answers for the 20 contradicted topics")
+    p(f"\nC. Final probe answers for the {len(CONTRADICTED)} contradicted topics")
     p(f"  {'config':<20}{'correction':>11}{'original A':>11}{'nothing':>9}{'other topic':>12}")
     for name, _ in CONFIGS + POSTHOC:
         if name == POSTHOC[0][0]:
@@ -349,7 +363,7 @@ def main():
         p(f"  {name:<20}{c.get('succ', 0):>11}{c.get('orig', 0):>11}{c.get('none', 0):>9}"
           f"{c.get('other', 0):>12}")
 
-    p("\nD. Weight trajectories, mean over the 20 contradicted beliefs (t0, t1, t2, t3)")
+    p(f"\nD. Weight trajectories, mean over the {len(CONTRADICTED)} contradicted beliefs (t0, t1, t2, t3)")
     for name in ("paper", "paper + trust", "revised", "revised - RIF", "revised, both + gate"):
         s = summaries[name]
         p(f"  {name:<20} w(A)    " + "  ".join(f"{x:.3f}" for x in s["A_weight"]))
@@ -373,11 +387,11 @@ def main():
     p(f"\n  {time.time() - t0:.0f}s")
     text = "\n".join(out)
     print(text)
-    with open("results/exp_convergence.txt", "w") as f:
+    with open(f"results/exp_convergence{suffix}.txt", "w") as f:
         f.write(text + "\n")
     js = {name: {k: (dict(v) if isinstance(v, Counter) else v) for k, v in s.items()}
           for name, s in summaries.items()}
-    with open("results/exp_convergence.json", "w") as f:
+    with open(f"results/exp_convergence{suffix}.json", "w") as f:
         json.dump({"theta_rel": THETA_REL, "configs": dict(CONFIGS + POSTHOC), "summaries": js,
                    "trajectories": {n: r["traj"] for n, r in results.items()}},
                   f, indent=1, default=lambda o: o.tolist() if hasattr(o, "tolist") else str(o))

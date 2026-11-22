@@ -1,0 +1,118 @@
+==============================================================================
+ Experiment 4.2: belief convergence under contradicting evidence (fresh set)  
+==============================================================================
+  GPT-2 small layer 8, residual - b_dec keys, context retrieval, theta_rel 0.608
+  NLI DeBERTa-v3-base-mnli-fever-anli (contradiction >= 0.7, entailment >= 0.5)
+  store: 20 contradicted beliefs A (INFERRED, w 0.8), 10 consistent (VERIFIED, w 0.8)
+  3 turns, each: 20 B-evidence + 10 agreeing + 10 unrelated contexts, shuffled; 1 turn = 1 day
+
+NLI ceiling (right belief, right evidence -- no retrieval involved)
+  A vs its B evidence judged CONTRADICTION: 0.92 of 60
+  consistent belief vs agreeing evidence:   ENTAILMENT 0.70, CONTRADICTION 0.00 of 30
+    missed: 'Mars is the closest planet to the Sun.' vs 'The innermost planet of the solar system is Mercury.' -> NEUTRAL
+    missed: 'The Nile flows through Brazil.' vs 'Egypt lies along the banks of the Nile.' -> NEUTRAL
+    missed: 'A year on Earth has 300 days.' vs 'The Earth takes about 365 days to orbit the Sun.' -> NEUTRAL
+    missed: 'A year on Earth has 300 days.' vs 'There are three hundred and sixty-five days in a common year.' -> ENTAILMENT
+    missed: 'Jupiter is the smallest planet in the solar system.' vs 'No planet in the solar system is bigger than Jupiter.' -> ENTAILMENT
+
+Retrieval during evidence (same for every config with the same ranking)
+  evidence retrieved its own belief: contradicted 0.92, consistent 1.00 (per context, over 3 turns)
+  unrelated contexts that retrieved something: 12 flags over 30 contexts
+
+A. Convergence (20 contradicted beliefs). switch = probe answers with the correction,
+  over the 14 topics whose probe question reaches the belief at all (t0)
+  config                switch t1/t2/t3   w(A) t0->t3 weff(A) t3 weff(B) t3  succ/A        A final states
+  paper                  0.00/0.00/0.00   0.80->0.50      0.174      0.325  2.8/4                 CON20
+  paper + trust          1.00/1.00/0.92   0.80->0.33      0.113      0.231  1.1/2                 CON20
+  paper + tier           0.00/0.00/0.00   0.80->0.50      0.181      0.417  2.8/4                 CON20
+  revised                1.00/1.00/1.00   0.80->0.26      0.017      0.298  1.1/2            CON5 SUP15
+  revised - trust        0.00/0.00/0.00   0.80->0.27      0.041      0.309  1.8/3            CON7 SUP13
+  revised - tier         1.00/1.00/1.00   0.80->0.26      0.017      0.230  1.1/2            CON5 SUP15
+  revised - weaken       1.00/1.00/1.00   0.80->0.34      0.022      0.300  1.1/2            CON5 SUP15
+  revised - dedup        1.00/1.00/1.00   0.80->0.26      0.017      0.298  1.1/2            CON5 SUP15
+  revised - supersede    1.00/1.00/1.00   0.80->0.26      0.090      0.298  1.1/2                 CON20
+  revised - RIF          1.00/1.00/1.00   0.80->0.70      0.061      0.472  1.0/1            CON5 SUP15
+  no recon               0.00/0.00/0.00   0.80->0.80      0.557      0.000  0.0/0                 ACT20
+  -- post hoc ------------------------------------------------------------
+  revised, lineage       1.00/1.00/1.00   0.80->0.25      0.009      0.322  1.1/2            CON4 SUP16
+  revised, RIF floor     1.00/1.00/1.00   0.80->0.39      0.033      0.343  1.0/1            CON5 SUP15
+  revised, both          1.00/1.00/1.00   0.80->0.37      0.023      0.364  1.0/1            CON4 SUP16
+  paper, both            1.00/1.00/1.00   0.80->0.48      0.164      0.295  1.1/2                 CON20
+  revised, both + gate   1.00/1.00/1.00   0.80->0.37      0.023      0.364  1.0/1            CON4 SUP16
+  succ/A = successors per contradicted belief, mean/max (1 is ideal; the paper rule
+  creates one per contradiction). States: ACT(ive) CON(tested) SUP(erseded).
+
+B. Side effects. A config is only good if it converges WITHOUT these.
+  config               false contests consistent contested consistent kept w(consistent) t3 off-target flags
+  paper                             4                    0             4/4            0.533               15
+  paper + trust                     4                    2             2/4            0.508               26
+  paper + tier                      4                    0             4/4            0.533               15
+  revised                           6                    2             2/4            0.468               26
+  revised - trust                   4                    0             4/4            0.517               15
+  revised - tier                    4                    2             2/4            0.488               26
+  revised - weaken                  6                    2             2/4            0.488               26
+  revised - dedup                   6                    2             2/4            0.468               26
+  revised - supersede               6                    2             2/4            0.468               26
+  revised - RIF                     5                    2             2/4            0.870               25
+  no recon                          0                    0             4/4            0.800               21
+  -- post hoc ------------------------------------------------------------
+  revised, lineage                  0                    0             4/4            0.511               15
+  revised, RIF floor                5                    2             2/4            0.687               24
+  revised, both                     0                    0             4/4            0.711               15
+  paper, both                       0                    0             4/4            0.714               15
+  revised, both + gate              0                    0             4/4            0.711               15
+  false contests: contests APPLIED to anything but a contradicted belief's own
+  evidence. consistent kept: of the consistent topics the probe reached at t0, how many
+  it still answers with the original belief at t3.
+  contest gate held back 0 contradictions, 0 of them true ones
+
+C. Final probe answers for the 20 contradicted topics
+  config               correction original A  nothing other topic
+  paper                         0         14        6           0
+  paper + trust                13          1        6           0
+  paper + tier                  0         14        6           0
+  revised                      14          0        6           0
+  revised - trust               0          5       15           0
+  revised - tier               14          0        6           0
+  revised - weaken             14          0        6           0
+  revised - dedup              14          0        6           0
+  revised - supersede          14          0        6           0
+  revised - RIF                14          0        6           0
+  no recon                      0         14        6           0
+  -- post hoc ------------------------------------------------------------
+  revised, lineage             14          0        6           0
+  revised, RIF floor           13          0        6           1
+  revised, both                14          0        6           0
+  paper, both                  14          0        6           0
+  revised, both + gate         14          0        6           0
+
+D. Weight trajectories, mean over the 20 contradicted beliefs (t0, t1, t2, t3)
+  paper                w(A)    0.800  0.656  0.557  0.498
+                       weff(A) 0.560  0.230  0.195  0.174
+                       weff(B) 0.000  0.309  0.308  0.325
+  paper + trust        w(A)    0.800  0.650  0.449  0.332
+                       weff(A) 0.560  0.227  0.155  0.113
+                       weff(B) 0.000  0.313  0.266  0.231
+  revised              w(A)    0.800  0.550  0.351  0.264
+                       weff(A) 0.560  0.192  0.056  0.017
+                       weff(B) 0.000  0.402  0.343  0.298
+  revised - RIF        w(A)    0.800  0.700  0.700  0.700
+                       weff(A) 0.560  0.245  0.109  0.061
+                       weff(B) 0.000  0.450  0.462  0.472
+  revised, both + gate w(A)    0.800  0.621  0.475  0.375
+                       weff(A) 0.560  0.217  0.065  0.023
+                       weff(B) 0.000  0.422  0.393  0.364
+
+E. Threshold sensitivity (theta_rel also sets the RIF floor where used)
+  config           contest theta_rel  detect A switch t3 false contests unrelated flags off-target
+  revised                -     0.550      0.93      0.94              7              38         40
+  revised                -     0.608      0.88      1.00              6              14         26
+  revised                -     0.660      0.83      1.00              0               0         14
+  both + gate         0.70     0.550      0.95      1.00              0              30         25
+  both + gate         0.70     0.608      0.92      1.00              0              12         15
+  both + gate         0.70     0.660      0.87      1.00              0               0          9
+  both + gate         0.65     0.608      0.92      1.00              0              12         15
+  both + gate         0.75     0.608      0.92      1.00              0              12         15
+  both + gate         0.80     0.608      0.92      1.00              0              12         15
+
+  36s
