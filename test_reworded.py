@@ -13,6 +13,7 @@ import numpy as np
 from calibration_study import first_occurrence, load
 from reword_triviaqa import check_paraphrase, check_statement, clean, overlap, swap_answer
 from reworded_study import CONDITIONS, view
+from train_key_projection import Projection, info_nce, train
 
 Q = "Who wrote the play Romeo and Juliet?"
 ALIASES = ["William Shakespeare", "Shakespeare"]
@@ -73,8 +74,33 @@ def test_condition_views():
     print("[PASS] condition views pick the right keys and the answer to the wording asked")
 
 
+def test_key_projection_starts_at_baseline_and_learns():
+    import torch
+    x = torch.randn(5, 12, generator=torch.Generator().manual_seed(0))
+    for kind, rank in (("diag", 0), ("lowrank", 4), ("full", 0)):
+        P = Projection(12, kind, rank)
+        assert torch.allclose(P(x), x), kind                 # untrained = raw keys exactly
+        assert float(P.penalty()) == 0.0
+        assert np.allclose(x.numpy() @ P.matrix(), P(x).detach().numpy(), atol=1e-6)
+    # toy data: beliefs are random, a query is its belief plus a shared nuisance direction
+    # and noise in half the dimensions. A projection can learn to ignore both.
+    rng = np.random.default_rng(0)
+    n, d = 120, 12
+    b = rng.normal(size=(n, d)).astype(np.float32)
+    noise = np.concatenate([np.zeros((n, d // 2)), 3 * rng.normal(size=(n, d // 2))], 1)
+    q = (b + noise).astype(np.float32)
+    keys = {"q": q, "q_para": q, "b_stmt": b, "b_true": b}
+    fit, val = np.arange(80), np.arange(80, 120)
+    P, vloss, step, vbase = train(keys, fit, val, "diag", 0, steps=200, lr=5e-2, lam=0.0)
+    assert vloss < 0.5 * vbase and step > 0, (vloss, vbase)  # held-out loss falls
+    w = P.w.detach().numpy()
+    assert np.abs(w[: d // 2]).mean() > 2 * np.abs(w[d // 2:]).mean()  # noisy dims turned down
+    print("[PASS] key projection: untrained = raw keys; training lowers held-out loss on toy data")
+
+
 if __name__ == "__main__":
     test_paraphrase_checks()
     test_statement_checks_and_poison_swap()
     test_duplicate_questions_are_dropped_at_load()
     test_condition_views()
+    test_key_projection_starts_at_baseline_and_learns()

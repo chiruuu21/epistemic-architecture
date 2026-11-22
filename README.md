@@ -67,6 +67,28 @@ the two query wordings with the two belief wordings.
 - **Transfer depends on the model.** With the threshold and P(IK) map fit on the easy wording and used unchanged on the hardest, Qwen stays calibrated (ECE 0.030) but uses the store for only 42% of stored facts. GPT-2 small does not transfer (ECE 0.166): it needs calibration data in the wording it will see.
 - Caveats: the paraphrases are moderate rewordings (mean content-word overlap 0.57; 6% are near-identical), written by a sibling of the model under test. Qwen's own accuracy drops from 0.529 to 0.483 on them, so some changed the question's meaning or difficulty.
 
+**Trained addresses** (the first trained component;
+[`train_key_projection.py`](train_key_projection.py), [results/key_projection_*.txt](results/))
+
+The keys were raw mean hidden states, never trained to put a question near
+its answer. A small linear map on the keys (the models stay frozen) is
+trained with a contrastive loss on a third of the reworded questions and
+tested on the rest, through the unchanged calibration study. Criteria were
+fixed before the first run. Hardest condition, mean over three train/test
+splits:
+
+| Reworded question → statement belief | Top-1 | Falls back on a stored fact | Falls back when nothing is stored | System accuracy | Per-path ECE |
+|---|---|---|---|---|---|
+| Qwen2.5-3B, raw keys | 0.965 | 21% | 91% | 0.652 | 0.038 |
+| Qwen2.5-3B, **trained keys** | **0.989** | **7%** | 94% | **0.706** | 0.029 |
+| GPT-2 small, raw keys | 0.930 | 1% | 15% | 0.490 | 0.031 |
+| GPT-2 small, **trained keys** | **0.977** | 2% | **54%** | **0.520** | 0.022 |
+
+- Qwen passes all four criteria: the coverage loss from rewording is cut by two thirds and system accuracy rises 5 points, with calibration intact and no harm to the easy condition.
+- GPT-2 fails the coverage criterion as written, because its baseline already almost never fell back on stored facts. Its error was the opposite one (answering from the store when nothing relevant was stored), and that improves from 15% to 54% correct rejections.
+- **Out of domain** (GPT-2): on the 60 hand-written convergence topics, which share nothing with TriviaQA, the same map raises a probe question's match to its belief from cosine 0.44 to 0.58 and related-vs-unrelated AUROC from 0.968 to 0.998.
+- Caveats: test questions were reworded by the same model as the training ones; the out-of-domain check has not been run for Qwen (needs a GPU); the map is not yet wired into `EpTLoop`, whose thresholds (θ_rel 0.608) were fit in the raw key space.
+
 **§4.2 Convergence** (20 contradicted beliefs, 10 consistent beliefs, 10
 unrelated contexts, 3 turns; [results/exp_convergence.txt](results/exp_convergence.txt))
 
@@ -110,7 +132,7 @@ revision can be ablated.
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-python run_all_tests.py            # 87 offline checks, ~5 s, no downloads
+python run_all_tests.py            # 88 offline checks, ~6 s, no downloads
 python exp_convergence.py          # §4.2, ~30 s on a laptop CPU (GPT-2 + DeBERTa)
 python calibration_study.py --tag qwen2.5-3b   # §4.3, CPU, from saved keys
 python smoke_test_lm_loop.py       # full loop on real GPT-2 hidden states
@@ -135,6 +157,7 @@ laptop CPU.
 | `lm_hook.py`, `sae_loader.py` | GPT-2 residual hooks; pretrained SAE / b_dec centre |
 | `calibration.py`, `calibration_study.py` | ECE/AUROC/Platt, `CombinedPIK`, §4.3 |
 | `reword_triviaqa.py`, `reworded_study.py` | Reworded questions and statement beliefs; §4.3 under hard retrieval |
+| `train_key_projection.py` | Trained linear map on the keys (contrastive), with held-out and out-of-domain checks |
 | `convergence_data.py`, `exp_convergence.py` | §4.2 fact set and experiment |
 | `convergence_data_fresh.py` | §4.2 held-out replication set (`--data fresh`) |
 | `analysis_*.py` | Retrieval and FOK analyses from Reports 3–4 |

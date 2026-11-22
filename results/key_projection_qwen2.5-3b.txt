@@ -1,0 +1,48 @@
+==============================================================================
+Trained key projection: Qwen/Qwen2.5-3B (layer 24, d = 2048)
+2597 reworded questions; 1/3 train (20% of it validation), 2/3 evaluation pool
+==============================================================================
+
+A. Training (seed 0): validation loss, untrained 0.048
+  diag           validation loss 0.029 at step 400
+  lowrank r=16   validation loss 0.009 at step 400
+  lowrank r=64   validation loss 0.009 at step 400  <- chosen (lowest validation loss)
+  full           validation loss 0.010 at step 400
+
+B. Test half of the evaluation pool, condition 4 new Q  -> statement (seed 0)
+  keys                    top-1  own cos rel AUROC  FOK stor  FOK unstor  sys acc     ECE   AUROC
+  raw keys (baseline)     0.971    0.678     0.929     0.213       0.928    0.680   0.030   0.897
+  diag                    0.984    0.682     0.957     0.126       0.923    0.699   0.031   0.902
+  lowrank r=16            0.989    0.723     0.982     0.069       0.940    0.721   0.021   0.921
+  lowrank r=64 *          0.989    0.724     0.984     0.078       0.969    0.725   0.027   0.925
+  full                    0.991    0.717     0.982     0.033       0.904    0.722   0.024   0.915
+
+B. Test half of the evaluation pool, condition 1 same Q -> Q+A belief (seed 0)
+  keys                    top-1  own cos rel AUROC  FOK stor  FOK unstor  sys acc     ECE   AUROC
+  raw keys (baseline)     1.000    0.909     0.999     0.007       0.971    0.776   0.027   0.943
+  diag                    1.000    0.911     0.999     0.007       0.983    0.779   0.030   0.945
+  lowrank r=16            1.000    0.932     1.000     0.000       0.983    0.783   0.029   0.949
+  lowrank r=64 *          1.000    0.933     1.000     0.000       0.973    0.778   0.025   0.948
+  full                    1.000    0.924     1.000     0.002       0.993    0.784   0.030   0.950
+  * chosen on validation. FOK stor / unstor: how often the system falls back to the
+  LM on stored / unstored questions (ideal 0 / 1). ECE, AUROC: per-path P(IK).
+
+C. All four conditions, raw keys -> chosen projection (seed 0)
+  condition                          top-1      FOK stored         sys acc             ECE
+  1 same Q -> Q+A belief    1.000 -> 1.000  0.007 -> 0.000  0.776 -> 0.778  0.027 -> 0.025
+  2 new Q  -> Q+A belief    0.956 -> 0.996  0.109 -> 0.018  0.685 -> 0.734  0.033 -> 0.025
+  3 same Q -> statement     0.989 -> 0.998  0.135 -> 0.047  0.732 -> 0.760  0.037 -> 0.031
+  4 new Q  -> statement     0.971 -> 0.989  0.213 -> 0.078  0.680 -> 0.725  0.030 -> 0.027
+
+D. Robustness over 3 train/evaluation splits, condition 4 new Q  -> statement (mean, min-max)
+  raw keys           FOK stored 0.209 (0.175-0.239)  FOK unstored 0.910 (0.867-0.935)
+                     sys acc 0.652 (0.635-0.680)  top-1 0.965 (0.947-0.976)  ECE 0.038 (0.030-0.049)
+  chosen projection  FOK stored 0.069 (0.053-0.078)  FOK unstored 0.935 (0.916-0.969)
+                     sys acc 0.706 (0.692-0.725)  top-1 0.989 (0.982-0.996)  ECE 0.029 (0.021-0.040)
+  variant chosen per split: lowrank r=64, lowrank r=64, lowrank r=64
+
+Criteria (fixed before the first run; seed 0)
+  [PASS] 1 coverage (fallback on stored down >= 1/3, unstored not down > 0.03)
+  [PASS] 2 accuracy (system accuracy up >= 2 points)
+  [PASS] 3 calibration (per-path ECE < 0.05)
+  [PASS] 4 no harm (condition 1 accuracy within 1 point)
