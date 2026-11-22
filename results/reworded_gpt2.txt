@@ -1,0 +1,57 @@
+==============================================================================
+Reworded TriviaQA study: openai-community/gpt2 (layer 8)
+rewordings by Qwen/Qwen2.5-3B-Instruct; 2597 of 2780 questions passed both checks (93.4%)
+content-word overlap, original vs paraphrased question: mean 0.57 (quartiles 0.43 / 0.57 / 0.71)
+meaning check: model accuracy on the original wording 0.049, on the paraphrase 0.051
+==============================================================================
+
+A. Retrieval and the FOK decision (test half)
+  condition                   top-1  own cos  rel AUROC   theta  FOK stored  FOK unstored
+  1 same Q -> Q+A belief      0.997    0.886      0.993   0.552       0.006         0.731
+  2 new Q  -> Q+A belief      0.874    0.712      0.886   0.374       0.006         0.107
+  3 same Q -> statement       0.967    0.708      0.931   0.386       0.020         0.363
+  4 new Q  -> statement       0.911    0.638      0.862   0.352       0.025         0.224
+  top-1: the stored question retrieves its own belief. own cos: its mean match cosine.
+  rel AUROC: best-match cosine separates stored from unstored questions.
+  FOK stored / unstored: how often the system falls back to the LM (ideal 0 / 1).
+
+B. System accuracy and calibration (test half; maps refit per condition)
+  1 same Q -> Q+A belief: system accuracy 0.515 (LM alone 0.055)
+  confidence                           acc   conf             ECE [95% CI]  Brier   AUROC right>wrong [CI]
+  binary PIK (paper: weff or 0)      0.515  0.509     0.032 [0.018, 0.051]  0.124     0.845 [0.824, 0.863]
+  graded, store signal only          0.515  0.521     0.037 [0.028, 0.050]  0.047     0.973 [0.963, 0.982]
+  graded, per path (store | LM)      0.515  0.519     0.012 [0.010, 0.027]  0.043     0.984 [0.978, 0.989]
+  2 new Q  -> Q+A belief: system accuracy 0.444 (LM alone 0.053)
+  confidence                           acc   conf             ECE [95% CI]  Brier   AUROC right>wrong [CI]
+  binary PIK (paper: weff or 0)      0.444  0.764     0.326 [0.300, 0.353]  0.348     0.545 [0.534, 0.557]
+  graded, store signal only          0.444  0.462     0.034 [0.024, 0.055]  0.120     0.904 [0.888, 0.920]
+  graded, per path (store | LM)      0.444  0.461     0.037 [0.026, 0.058]  0.120     0.905 [0.889, 0.921]
+  3 same Q -> statement: system accuracy 0.491 (LM alone 0.055)
+  confidence                           acc   conf             ECE [95% CI]  Brier   AUROC right>wrong [CI]
+  binary PIK (paper: weff or 0)      0.491  0.653     0.179 [0.155, 0.204]  0.239     0.673 [0.655, 0.691]
+  graded, store signal only          0.491  0.506     0.034 [0.025, 0.054]  0.097     0.935 [0.921, 0.948]
+  graded, per path (store | LM)      0.491  0.506     0.031 [0.023, 0.050]  0.096     0.937 [0.924, 0.950]
+  4 new Q  -> statement: system accuracy 0.461 (LM alone 0.053)
+  confidence                           acc   conf             ECE [95% CI]  Brier   AUROC right>wrong [CI]
+  binary PIK (paper: weff or 0)      0.461  0.708     0.261 [0.235, 0.286]  0.299     0.602 [0.587, 0.619]
+  graded, store signal only          0.461  0.467     0.029 [0.022, 0.051]  0.131     0.889 [0.870, 0.906]
+  graded, per path (store | LM)      0.461  0.464     0.027 [0.022, 0.051]  0.130     0.890 [0.872, 0.907]
+
+C. Transfer: theta_rel and P(IK) fit on condition 1, used unchanged on harder wording
+  tested on                  sys acc  FOK stored              ECE [95% CI]   AUROC
+  2 new Q  -> Q+A belief       0.411       0.172      0.115 [0.099, 0.135]   0.923
+  3 same Q -> statement        0.444       0.165      0.143 [0.125, 0.161]   0.937
+  4 new Q  -> statement        0.370       0.309      0.166 [0.146, 0.185]   0.904
+
+D. Poisoned store in condition 4 (20% of stored statements carry a wrong answer)
+  confidence                           acc   conf             ECE [95% CI]  Brier   AUROC right>wrong [CI]
+  graded, provenance informative     0.371  0.361     0.027 [0.022, 0.049]  0.109     0.917 [0.901, 0.931]
+  graded, provenance shuffled        0.371  0.370     0.043 [0.035, 0.068]  0.157     0.838 [0.815, 0.859]
+
+Robustness: per-path P(IK) test ECE across 5 calibration/test splits (mean, min-max)
+  1 same Q -> Q+A belief     ECE 0.012 (0.007-0.017)   AUROC 0.983
+  2 new Q  -> Q+A belief     ECE 0.032 (0.024-0.051)   AUROC 0.913
+  3 same Q -> statement      ECE 0.019 (0.013-0.024)   AUROC 0.945
+  4 new Q  -> statement      ECE 0.023 (0.015-0.037)   AUROC 0.893
+
+Target: ECE < 0.05 with AUROC well above 0.5, in condition 4 (4 new Q  -> statement).

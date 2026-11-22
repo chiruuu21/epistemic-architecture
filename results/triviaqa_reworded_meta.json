@@ -1,0 +1,13 @@
+{
+  "model": "Qwen/Qwen2.5-3B-Instruct",
+  "dtype": "float16",
+  "device": "cuda:0",
+  "n": 2780,
+  "src": "results/triviaqa_gpt2.jsonl",
+  "para_ok": 0.9730215827338129,
+  "stmt_ok": 0.9593525179856115,
+  "both_ok": 0.9341726618705036,
+  "mean_overlap_ok": 0.5727181363111282,
+  "seconds": 1025.5,
+  "transformers": "5.17.0"
+}

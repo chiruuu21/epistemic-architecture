@@ -45,12 +45,27 @@ could sit in both the calibration and test halves. The analysis now keeps
 one copy of each (2,780 questions). The table above is the corrected one;
 before the fix the last row read 0.021 / 0.012. No conclusion changes.
 
-**Reworded TriviaQA** (hard retrieval; pending the Colab run):
-[`reword_triviaqa.py`](reword_triviaqa.py) has an instruction-tuned model
-paraphrase each question and restate each fact as a sentence, and
-[`reworded_study.py`](reworded_study.py) repeats the calibration study with
-reworded queries against statement beliefs, including a transfer test
-(thresholds fit on the easy wording, used unchanged on the hard one).
+**§4.3 under hard retrieval** (reworded TriviaQA, 2,597 questions, 1,299 held out;
+[results/reworded_*.txt](results/))
+
+In the table above each belief is stored as "question + answer" and looked
+up with the same question. Here an instruction-tuned model
+(Qwen2.5-3B-Instruct, [`reword_triviaqa.py`](reword_triviaqa.py))
+paraphrases every question and restates every fact as a sentence; 93% pass
+the automatic checks. [`reworded_study.py`](reworded_study.py) then crosses
+the two query wordings with the two belief wordings.
+
+| Qwen2.5-3B | Top-1 retrieval | Falls back on a stored fact | System accuracy (LM alone) | Per-path ECE (AUROC) |
+|---|---|---|---|---|
+| Same question → question + answer belief | 0.998 | 2% | 0.746 (0.526) | 0.020 (0.95) |
+| Reworded question → question + answer belief | 0.955 | 17% | 0.646 (0.473) | 0.033 (0.91) |
+| Same question → statement belief | 0.977 | 15% | 0.704 (0.526) | 0.031 (0.92) |
+| **Reworded question → statement belief** | **0.949** | **22%** | **0.642 (0.473)** | **0.031 (0.90)** |
+
+- **Calibration holds.** In the hardest condition per-path P(IK) stays under the 0.05 target for both models (GPT-2 small: 0.027, AUROC 0.89; five-split means 0.026 and 0.023). The paper's binary P(IK) (0.284) and store-only P(IK) (0.080) still miss it on Qwen.
+- **Retrieval degrades, and the cost is coverage.** The right belief is still ranked first 95% of the time, but its match is weaker (mean cosine 0.91 → 0.68), so the system falls back to the model on 22% of the facts it has stored. The store's accuracy gain over the model alone shrinks from 22 to 17 points.
+- **Transfer depends on the model.** With the threshold and P(IK) map fit on the easy wording and used unchanged on the hardest, Qwen stays calibrated (ECE 0.030) but uses the store for only 42% of stored facts. GPT-2 small does not transfer (ECE 0.166): it needs calibration data in the wording it will see.
+- Caveats: the paraphrases are moderate rewordings (mean content-word overlap 0.57; 6% are near-identical), written by a sibling of the model under test. Qwen's own accuracy drops from 0.529 to 0.483 on them, so some changed the question's meaning or difficulty.
 
 **§4.2 Convergence** (20 contradicted beliefs, 10 consistent beliefs, 10
 unrelated contexts, 3 turns; [results/exp_convergence.txt](results/exp_convergence.txt))
@@ -128,5 +143,5 @@ laptop CPU.
 
 - Gates are untrained. Gate mode changes the model's output, but not usefully yet.
 - The thought step is an MLP placeholder, not Quiet-STaR.
-- On TriviaQA each stored belief contains its question's wording, so retrieval is easy (top-1 ≈ 1.00). The reworded study addresses this; its results are pending.
+- On TriviaQA each stored belief contains its question's wording, so retrieval is easy (top-1 ≈ 1.00). The reworded study measures the harder case.
 - In §4.2, probe questions reach only 12 of the 20 topics at θ_rel 0.608. Paraphrased evidence is often judged NEUTRAL by NLI, so corrections are reinforced about half the time.

@@ -1,0 +1,13 @@
+{
+  "model": "openai-community/gpt2",
+  "layer": 8,
+  "dtype": "float16",
+  "device": "cuda:0",
+  "n": 2780,
+  "para_ok": 0.9730215827338129,
+  "stmt_ok": 0.9593525179856115,
+  "accuracy_em_original": 0.048798521256931605,
+  "accuracy_em_paraphrase": 0.05027726432532347,
+  "seconds": 94.5,
+  "gpu": "Tesla T4"
+}
