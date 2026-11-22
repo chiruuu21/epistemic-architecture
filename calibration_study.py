@@ -53,11 +53,32 @@ from triviaqa_data import is_correct
 W = 78
 
 
+def first_occurrence(ids):
+    """Row indices of the first occurrence of each id, in order."""
+    seen, keep = set(), []
+    for i, x in enumerate(ids):
+        if x not in seen:
+            seen.add(x)
+            keep.append(i)
+    return keep
+
+
 def load(tag, root="results"):
+    """Records, keys and meta of one collection, WITHOUT duplicate questions.
+
+    TriviaQA's rc.nocontext validation split lists some questions twice
+    (same question_id), and the 3,000-row sample drew 220 such pairs. A
+    duplicate breaks the design twice over: one copy can be stored while
+    its twin counts as "not stored" (and then retrieves the belief with a
+    perfect match), and one copy can sit in calibration while its twin is
+    in test. Only the first copy of each question is kept (2,780 rows).
+    meta["n_collected"] keeps the original row count."""
     recs = [json.loads(l) for l in open(f"{root}/triviaqa_{tag}.jsonl")]
     k = np.load(f"{root}/triviaqa_{tag}_keys.npz")
     meta = json.load(open(f"{root}/triviaqa_{tag}_meta.json"))
-    return recs, {n: k[n].astype(np.float32) for n in k.files}, meta
+    keep = first_occurrence(r["id"] for r in recs)
+    meta = {**meta, "n_collected": len(recs), "n_unique": len(keep)}
+    return [recs[i] for i in keep], {n: k[n].astype(np.float32)[keep] for n in k.files}, meta
 
 
 def unit(x):
@@ -184,7 +205,8 @@ def report(tag, recs, keys, meta, splits):
     p("=" * W)
     p(f"Calibration study: {meta['model']} (layer {meta['layer']}, {meta['dtype']}, "
       f"{meta.get('gpu') or meta['device']})")
-    p(f"TriviaQA rc.nocontext validation, n={len(recs)} (seed {meta['seed']}); "
+    p(f"TriviaQA rc.nocontext validation, n={len(recs)} unique questions "
+      f"({meta['n_collected'] - len(recs)} duplicate rows dropped; seed {meta['seed']}); "
       f"calibration/test 50/50; 95% bootstrap CIs over test questions")
     p(f"loop check: |EpTLoop last-token cosine - pooled cosine| <= "
       f"{meta['loop_check']['max_abs_diff']:.1e} over {meta['loop_check']['n']} questions")

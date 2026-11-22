@@ -63,21 +63,29 @@ def belief_text(question: str, answer: str) -> str:
     return f"{question.strip()} Answer: {answer.strip()}."
 
 
-def load_sample(n: int, seed: int = 0) -> list[dict]:
+def load_sample(n: int, seed: int = 0, unique: bool = False) -> list[dict]:
     """n questions from the validation split, fixed by seed. Each item:
     {id, question, value, aliases}. Few-shot exemplar questions are
-    excluded so a model cannot be scored on its own prompt."""
+    excluded so a model cannot be scored on its own prompt.
+
+    The split lists some questions twice (same question_id). By default the
+    sample is left as it was drawn, so the saved collections can be
+    reproduced; calibration_study.load drops the duplicates at analysis
+    time. unique=True skips them here instead (use for new collections)."""
     import numpy as np
     from datasets import load_dataset
 
     ds = load_dataset(*DATASET, split=SPLIT)
     shot_qs = {normalize(q) for q, _ in FEW_SHOT}
     order = np.random.default_rng(seed).permutation(len(ds))
-    out = []
+    out, seen = [], set()
     for i in order:
         row = ds[int(i)]
         if normalize(row["question"]) in shot_qs:
             continue
+        if unique and row["question_id"] in seen:
+            continue
+        seen.add(row["question_id"])
         ans = row["answer"]
         aliases = list(dict.fromkeys([ans["value"], *ans["aliases"], *ans.get("normalized_aliases", [])]))
         out.append({"id": row["question_id"], "question": row["question"],

@@ -25,18 +25,32 @@ residual stream of GPT-2 small (layer 8) or Qwen2.5-3B (layer 24).
 
 ## Results
 
-**§4.3 Calibration** (TriviaQA, 1,500 held-out questions per model;
+**§4.3 Calibration** (TriviaQA, 1,390 held-out questions per model;
 [results/calibration_*.txt](results/))
 
 | Confidence | GPT-2 small ECE (AUROC) | Qwen2.5-3B ECE (AUROC) |
 |---|---|---|
-| Paper's binary P(IK) | 0.044 (0.90) | 0.322 (0.80) |
-| Store-only, graded | 0.030 (0.98) | 0.085 (0.82) |
-| **Store + model, per path** | **0.021 (0.99)** | **0.012 (0.95)** |
+| Paper's binary P(IK) | 0.024 (0.88) | 0.335 (0.81) |
+| Store-only, graded | 0.027 (0.98) | 0.082 (0.83) |
+| **Store + model, per path** | **0.011 (0.98)** | **0.019 (0.95)** |
 
 The target was ECE < 0.05. It is only met once P(IK) also takes the
 model's own answer probability, because the store cannot see what the
 model already knows from its weights.
+
+*Correction (Nov 21):* the 3,000-question sample contained 220 questions
+twice, because TriviaQA's `rc.nocontext` validation split lists them twice.
+A duplicate could be stored while its twin counted as "not stored", and
+could sit in both the calibration and test halves. The analysis now keeps
+one copy of each (2,780 questions). The table above is the corrected one;
+before the fix the last row read 0.021 / 0.012. No conclusion changes.
+
+**Reworded TriviaQA** (hard retrieval; pending the Colab run):
+[`reword_triviaqa.py`](reword_triviaqa.py) has an instruction-tuned model
+paraphrase each question and restate each fact as a sentence, and
+[`reworded_study.py`](reworded_study.py) repeats the calibration study with
+reworded queries against statement beliefs, including a transfer test
+(thresholds fit on the easy wording, used unchanged on the hard one).
 
 **§4.2 Convergence** (20 contradicted beliefs, 10 consistent beliefs, 10
 unrelated contexts, 3 turns; [results/exp_convergence.txt](results/exp_convergence.txt))
@@ -53,7 +67,7 @@ unrelated contexts, 3 turns; [results/exp_convergence.txt](results/exp_convergen
 - **As written, the paper's loop never converges.** A correction is stored at the same concept address as the belief it contests. Cosine retrieval then ties, and the old belief keeps winning. Trust-aware retrieval is the fix that matters most.
 - **NLI cannot judge whether two sentences are on the same topic.** DeBERTa-v3-base labels about 4% of completely unrelated pairs CONTRADICTION. Key cosine separates same-topic from cross-topic evidence at AUROC 0.99, so retrieval has to vouch for the topic before NLI may contest anything (`contest_min_sim`).
 - **RIF taxes bystanders.** In this key space every belief's 5 nearest neighbours sit near cosine 0.6, so the paper's RIF lowers unrelated beliefs on every retrieval. A competitor floor (`rif_min_sim`) limits it to real competitors.
-- The post-hoc settings were chosen **on this fact set**. They need confirming on a fresh one.
+- The post-hoc settings were chosen on this fact set, so they were re-tested on a **fresh set** ([`convergence_data_fresh.py`](convergence_data_fresh.py): 20 + 10 + 10 new facts, written with pass criteria before the first run, settings unchanged; `python exp_convergence.py --data fresh`, [results](results/exp_convergence_fresh.txt)). All criteria pass. Paper as written: 0/14. Revised + lineage + RIF floor + gate: 14/14 switched, 0 false contests, 4/4 consistent beliefs kept. The pre-planned "revised" config again crossed topics (6 false contests, 2 of 4 consistent beliefs lost), confirming lineage ranking is needed. The contest gate never fired on this set, so lineage ranking alone was enough here and the gate is not yet shown to help beyond the original set.
 
 **Retrieval** (GPT-2 layer 8, 50 paraphrase queries): residual−b_dec keys
 get 0.78 top-1, versus 0.50 for pretrained SAE codes.
@@ -81,13 +95,13 @@ revision can be ablated.
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-python run_all_tests.py            # 83 offline checks, ~4 s, no downloads
+python run_all_tests.py            # 87 offline checks, ~5 s, no downloads
 python exp_convergence.py          # §4.2, ~30 s on a laptop CPU (GPT-2 + DeBERTa)
 python calibration_study.py --tag qwen2.5-3b   # §4.3, CPU, from saved keys
 python smoke_test_lm_loop.py       # full loop on real GPT-2 hidden states
 ```
 
-`collect_triviaqa.py` is the only GPU step. It runs on a Colab T4 through
+`collect_triviaqa.py` and `reword_triviaqa.py` are the only GPU steps. They run on a Colab T4 through
 [`EpstLoop_colab.ipynb`](EpstLoop_colab.ipynb) and saves per-question
 records and hidden-state keys to `results/`. Everything else runs on a
 laptop CPU.
@@ -105,12 +119,14 @@ laptop CPU.
 | `claim_extraction.py` | Heuristic generation → per-belief claims |
 | `lm_hook.py`, `sae_loader.py` | GPT-2 residual hooks; pretrained SAE / b_dec centre |
 | `calibration.py`, `calibration_study.py` | ECE/AUROC/Platt, `CombinedPIK`, §4.3 |
+| `reword_triviaqa.py`, `reworded_study.py` | Reworded questions and statement beliefs; §4.3 under hard retrieval |
 | `convergence_data.py`, `exp_convergence.py` | §4.2 fact set and experiment |
+| `convergence_data_fresh.py` | §4.2 held-out replication set (`--data fresh`) |
 | `analysis_*.py` | Retrieval and FOK analyses from Reports 3–4 |
 
 ## Known limitations
 
 - Gates are untrained. Gate mode changes the model's output, but not usefully yet.
 - The thought step is an MLP placeholder, not Quiet-STaR.
-- On TriviaQA each stored belief contains its question's wording, so retrieval is easy (top-1 ≈ 0.95). Reworded queries are still to be tested.
+- On TriviaQA each stored belief contains its question's wording, so retrieval is easy (top-1 ≈ 1.00). The reworded study addresses this; its results are pending.
 - In §4.2, probe questions reach only 12 of the 20 topics at θ_rel 0.608. Paraphrased evidence is often judged NEUTRAL by NLI, so corrections are reinforced about half the time.

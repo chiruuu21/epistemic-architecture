@@ -1,63 +1,63 @@
 ==============================================================================
 Calibration study: Qwen/Qwen2.5-3B (layer 24, float16, Tesla T4)
-TriviaQA rc.nocontext validation, n=3000 (seed 0); calibration/test 50/50; 95% bootstrap CIs over test questions
+TriviaQA rc.nocontext validation, n=2780 unique questions (220 duplicate rows dropped; seed 0); calibration/test 50/50; 95% bootstrap CIs over test questions
 loop check: |EpTLoop last-token cosine - pooled cosine| <= 1.1e-04 over 32 questions
 ==============================================================================
 
-A. LM alone (closed-book, 5-shot, greedy). Accuracy (EM) 0.528; lenient match 0.568
+A. LM alone (closed-book, 5-shot, greedy). Accuracy (EM) 0.526; lenient match 0.565
   confidence                           acc   conf             ECE [95% CI]  Brier   AUROC right>wrong [CI]
-  answer probability (raw)           0.519  0.493     0.036 [0.028, 0.060]  0.140     0.883 [0.867, 0.900]
-  answer probability, Platt-scaled   0.519  0.527     0.025 [0.019, 0.048]  0.139     0.883 [0.867, 0.900]
-  constant = calib accuracy          0.519  0.537     0.019 [0.001, 0.044]  0.250     0.500 [0.500, 0.500]
+  answer probability (raw)           0.526  0.489     0.044 [0.032, 0.066]  0.139     0.887 [0.869, 0.904]
+  answer probability, Platt-scaled   0.526  0.513     0.032 [0.024, 0.055]  0.137     0.887 [0.869, 0.904]
+  constant = calib accuracy          0.526  0.527     0.001 [0.001, 0.029]  0.249     0.500 [0.500, 0.500]
   The constant row is the sanity check: near-zero ECE with AUROC 0.5. A low ECE
   only counts if AUROC is clearly above 0.5 as well.
 
-B. The loop on TriviaQA (1500 beliefs stored, half the questions)
-  relevance AUROC, stored vs not stored (best-match cosine): 0.960 [0.948, 0.971]
-  top-1 retrieval of the question's own belief (stored, test): 0.957
-  theta_rel (fit on calibration to maximise system accuracy): 0.692
-  FOK fires (test): stored 0.008   not stored 0.892
-  store path: 801/1500 test questions, accuracy 0.960; wrongly used on unstored: 84
+B. The loop on TriviaQA (1390 beliefs stored, half the questions)
+  relevance AUROC, stored vs not stored (best-match cosine): 0.997 [0.995, 0.998]
+  top-1 retrieval of the question's own belief (stored, test): 0.999
+  theta_rel (fit on calibration to maximise system accuracy): 0.733
+  FOK fires (test): stored 0.029   not stored 0.976
+  store path: 680/1390 test questions, accuracy 0.976; wrongly used on unstored: 17
 
-C. EpT system (store answer if relevant, else LM): accuracy 0.755 vs LM alone 0.519
+C. EpT system (store answer if relevant, else LM): accuracy 0.732 vs LM alone 0.526
   confidence                           acc   conf             ECE [95% CI]  Brier   AUROC right>wrong [CI]
-  binary PIK (paper: weff or 0)      0.755  0.433     0.322 [0.301, 0.344]  0.275     0.796 [0.776, 0.815]
-  graded, store signal only          0.755  0.765     0.085 [0.070, 0.105]  0.144     0.822 [0.802, 0.841]
-  graded, per path (store | LM)      0.755  0.756     0.012 [0.012, 0.033]  0.081     0.945 [0.934, 0.955]
-  graded, one map (store + LM)       0.755  0.752     0.052 [0.039, 0.070]  0.098     0.901 [0.880, 0.921]
+  binary PIK (paper: weff or 0)      0.732  0.396     0.335 [0.314, 0.356]  0.279     0.805 [0.787, 0.823]
+  graded, store signal only          0.732  0.741     0.082 [0.065, 0.102]  0.147     0.828 [0.807, 0.848]
+  graded, per path (store | LM)      0.732  0.728     0.019 [0.016, 0.038]  0.079     0.951 [0.940, 0.961]
+  graded, one map (store + LM)       0.732  0.732     0.052 [0.039, 0.068]  0.091     0.924 [0.905, 0.942]
   store-only PIK cannot see what the LM knows from its weights; the two rows
   below it add the LM's own answer probability (parametric confidence).
   per-path breakdown of 'graded, per path' (test):
-    store path           n=  801  acc 0.960  ECE 0.010  AUROC 0.957
-    FOK fallback (LM)    n=  699  acc 0.519  ECE 0.022  AUROC 0.881
-  graded store-path map: sigmoid(21.3*cos -0.00*log weff -14.61)
+    store path           n=  680  acc 0.976  ECE 0.007  AUROC 0.961
+    FOK fallback (LM)    n=  710  acc 0.497  ECE 0.036  AUROC 0.886
+  graded store-path map: sigmoid(28.2*cos +0.00*log weff -20.28)
   reliability, graded PIK on test (equal-width bins):
     bin               n    conf     acc
-    0.0-0.1         110   0.037   0.027
-    0.1-0.2          63   0.149   0.175
-    0.2-0.3          58   0.248   0.259
-    0.3-0.4          46   0.351   0.348
-    0.4-0.5          66   0.442   0.515
-    0.5-0.6          57   0.557   0.561
-    0.6-0.7          74   0.640   0.649
-    0.7-0.8          76   0.755   0.684
-    0.8-0.9          82   0.855   0.817
-    0.9-1.0         868   0.985   0.984
+    0.0-0.1         122   0.038   0.008
+    0.1-0.2          66   0.156   0.227
+    0.2-0.3          59   0.243   0.203
+    0.3-0.4          65   0.349   0.338
+    0.4-0.5          62   0.444   0.435
+    0.5-0.6          57   0.548   0.614
+    0.6-0.7          66   0.650   0.697
+    0.7-0.8          59   0.753   0.746
+    0.8-0.9          74   0.853   0.905
+    0.9-1.0         760   0.988   0.984
 
 D. Poisoned-store simulation (20% of stored beliefs carry a wrong answer)
   confidence                           acc   conf             ECE [95% CI]  Brier   AUROC right>wrong [CI]
-  graded, provenance informative     0.659  0.662     0.016 [0.014, 0.037]  0.081     0.956 [0.947, 0.964]
-  graded, provenance shuffled        0.659  0.650     0.026 [0.020, 0.051]  0.152     0.813 [0.788, 0.837]
+  graded, provenance informative     0.650  0.645     0.021 [0.018, 0.040]  0.076     0.961 [0.952, 0.969]
+  graded, provenance shuffled        0.650  0.634     0.035 [0.027, 0.059]  0.143     0.827 [0.801, 0.851]
   Informative provenance is built in by the simulation; the gap between the two
   rows is how much calibration the trust tiers can contribute, not evidence that
   real-world tiers are that informative.
 
 Robustness: test ECE across 5 calibration/test splits (mean, min-max)
-  LM Platt           ECE 0.032 (0.027-0.039)   AUROC 0.881
-  constant           ECE 0.010 (0.003-0.017)   AUROC 0.500
-  EpT binary PIK     ECE 0.315 (0.301-0.323)   AUROC 0.799
-  EpT store-only PIK ECE 0.088 (0.085-0.091)   AUROC 0.826
-  EpT graded PIK     ECE 0.020 (0.016-0.024)   AUROC 0.944
-  EpT one-map PIK    ECE 0.038 (0.030-0.048)   AUROC 0.897
+  LM Platt           ECE 0.030 (0.019-0.036)   AUROC 0.882
+  constant           ECE 0.014 (0.002-0.044)   AUROC 0.500
+  EpT binary PIK     ECE 0.343 (0.335-0.353)   AUROC 0.811
+  EpT store-only PIK ECE 0.078 (0.063-0.087)   AUROC 0.831
+  EpT graded PIK     ECE 0.018 (0.011-0.027)   AUROC 0.950
+  EpT one-map PIK    ECE 0.031 (0.023-0.044)   AUROC 0.934
 
 Target from the proposal: ECE < 0.05 (with AUROC well above 0.5).

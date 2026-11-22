@@ -10,6 +10,10 @@ results/triviaqa_<tag>_keys.npz (pooled hidden-state keys), plus a
 _meta.json. calibration_study.py then does all analysis on CPU from these
 files, so thresholds, splits and plots can be revisited without a GPU.
 
+    python collect_triviaqa.py --model Qwen/Qwen2.5-3B --reworded
+
+adds the hard-retrieval data for an existing collection (see REWORDED).
+
 PER QUESTION
   1. Closed-book answer: greedy decoding after a 5-shot prompt
      (triviaqa_data.FEW_SHOT), stopped at the first newline. Confidence
@@ -30,6 +34,16 @@ PER QUESTION
      the running mean of (z - center), i.e. the pooled key -- and this
      check verifies it, so the offline analysis provably describes what
      the loop would do.
+
+REWORDED (--reworded, after reword_triviaqa.py)
+  The base files are left untouched. For the same questions, same layer
+  and same poisoned answers, this writes triviaqa_<tag>_reworded.jsonl
+  (the model's answer to each paraphrased question, scored as above) and
+  triviaqa_<tag>_reworded_keys.npz with three more keys: q_para (the
+  paraphrased question), b_stmt (the fact as a statement) and b_stmt_wrong
+  (the statement with another question's answer). Items whose rewording
+  failed a check fall back to the original text and are flagged, so the
+  arrays stay aligned; reworded_study.py drops them.
 """
 
 from __future__ import annotations
@@ -185,6 +199,64 @@ def loop_check(lm: LM, items, q_keys, b_keys, n: int = 32) -> dict:
     return {"n": len(diffs), "max_abs_diff": float(max(diffs))}
 
 
+def collect_reworded(args, device, tag):
+    """Hard-retrieval extras for an existing collection (module docstring)."""
+    from calibration_study import first_occurrence
+    from reword_triviaqa import swap_answer
+
+    base = [json.loads(l) for l in open(f"{args.out}/triviaqa_{tag}.jsonl")]
+    base_meta = json.load(open(f"{args.out}/triviaqa_{tag}_meta.json"))
+    rew = {r["id"]: r for r in map(json.loads, open(f"{args.out}/triviaqa_reworded.jsonl"))}
+    base = [base[i] for i in first_occurrence(it["id"] for it in base)]  # duplicates: see load()
+    items = [it for it in base if it["id"] in rew][: args.n]
+    if len(items) < min(len(base), args.n):
+        print(f"note: {len(items)} of {len(base)} unique questions have a rewording", flush=True)
+    dtype = base_meta["dtype"] if device.type == "cuda" else "float32"
+    t0 = time.time()
+    print(f"{len(items)} reworded questions; loading {base_meta['model']} ({dtype}) on {device}", flush=True)
+    lm = LM(base_meta["model"], base_meta["layer"], dtype, device)
+
+    para_ok = [bool(rew[it["id"]]["para_ok"]) for it in items]
+    stmt_ok = [bool(rew[it["id"]]["stmt_ok"]) for it in items]
+    paras = [rew[it["id"]]["paraphrase"] if ok else it["question"] for it, ok in zip(items, para_ok)]
+    stmts = [rew[it["id"]]["statement"] if ok else belief_text(it["question"], it["value"])
+             for it, ok in zip(items, stmt_ok)]
+    stmts_wrong = [swap_answer(s, it["value"], it["wrong_value"]) if ok
+                   else belief_text(it["question"], it["wrong_value"])
+                   for s, it, ok in zip(stmts, items, stmt_ok)]
+
+    answers = lm.answer(paras, args.bs)
+    print(f"answers to paraphrases done ({time.time() - t0:.0f}s)", flush=True)
+    q_para = lm.pooled(paras, args.bs * 2)
+    b_stmt = lm.pooled(stmts, args.bs * 2)
+    b_stmt_wrong = lm.pooled(stmts_wrong, args.bs * 2)
+    print(f"keys done ({time.time() - t0:.0f}s)", flush=True)
+
+    with open(f"{args.out}/triviaqa_{tag}_reworded.jsonl", "w") as f:
+        for it, a, p, s, po, so in zip(items, answers, paras, stmts, para_ok, stmt_ok):
+            f.write(json.dumps({"id": it["id"], "paraphrase": p, "statement": s,
+                                "para_ok": po, "stmt_ok": so,
+                                "pred_para": a["pred"], "conf_seq_para": a["conf_seq"],
+                                "conf_first_para": a["conf_first"],
+                                "correct_para": is_correct(a["pred"], it["aliases"]),
+                                "correct_lenient_para": is_correct_lenient(a["pred"], it["aliases"])}) + "\n")
+    np.savez_compressed(f"{args.out}/triviaqa_{tag}_reworded_keys.npz", q_para=q_para.astype(np.float16),
+                        b_stmt=b_stmt.astype(np.float16), b_stmt_wrong=b_stmt_wrong.astype(np.float16))
+    ok = np.array(para_ok)
+    orig = np.array([it["correct"] for it in items])
+    para = np.array([is_correct(a["pred"], it["aliases"]) for it, a in zip(items, answers)])
+    meta = {"model": base_meta["model"], "layer": lm.layer, "dtype": dtype, "device": str(device),
+            "n": len(items), "para_ok": float(ok.mean()), "stmt_ok": float(np.mean(stmt_ok)),
+            # same questions, two wordings: a large drop means the paraphrases drifted
+            "accuracy_em_original": float(orig[ok].mean()) if ok.any() else None,
+            "accuracy_em_paraphrase": float(para[ok].mean()) if ok.any() else None,
+            "seconds": round(time.time() - t0, 1),
+            "gpu": torch.cuda.get_device_name(0) if device.type == "cuda" else None}
+    with open(f"{args.out}/triviaqa_{tag}_reworded_meta.json", "w") as f:
+        json.dump(meta, f, indent=2)
+    print(json.dumps(meta, indent=2))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="openai-community/gpt2")
@@ -195,12 +267,16 @@ def main():
     ap.add_argument("--bs", type=int, default=16)
     ap.add_argument("--out", default="results")
     ap.add_argument("--tag", default=None)
+    ap.add_argument("--reworded", action="store_true",
+                    help="add hard-retrieval keys/answers to an existing collection")
     args = ap.parse_args()
 
     device = pick_device()
     dtype = args.dtype if device.type == "cuda" else "float32"
     tag = args.tag or args.model.split("/")[-1].lower()
     os.makedirs(args.out, exist_ok=True)
+    if args.reworded:
+        return collect_reworded(args, device, tag)
     t0 = time.time()
 
     items = load_sample(args.n, args.seed)

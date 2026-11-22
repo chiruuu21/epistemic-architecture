@@ -25,6 +25,7 @@ MODULES = [
     ("test_context_retrieval.py", "Context retrieval: running mean, relevance cutoff, warm-up"),
     ("test_calibration.py", "Calibration: ECE/AUROC/Platt, TriviaQA matching, graded PIK"),
     ("test_convergence_logic.py", "Trust retrieval, reconsolidation revisions, P(IK) in loop"),
+    ("test_reworded.py", "Reworded TriviaQA: rewording checks, duplicate removal, views"),
 ]
 
 WIDTH = 78
